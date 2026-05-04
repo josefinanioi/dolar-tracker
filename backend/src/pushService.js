@@ -5,12 +5,16 @@ function init() {
     console.warn('⚠️  VAPID keys no configuradas — push notifications deshabilitadas');
     return;
   }
-  webpush.setVapidDetails(
-    `mailto:${process.env.VAPID_EMAIL || 'admin@dolartracker.app'}`,
-    process.env.VAPID_PUBLIC_KEY,
-    process.env.VAPID_PRIVATE_KEY
-  );
-  console.log('🔔 Web Push configurado');
+  try {
+    webpush.setVapidDetails(
+      `mailto:${process.env.VAPID_EMAIL || 'admin@dolartracker.app'}`,
+      process.env.VAPID_PUBLIC_KEY,
+      process.env.VAPID_PRIVATE_KEY
+    );
+    console.log('🔔 Web Push configurado');
+  } catch (err) {
+    console.warn('⚠️  VAPID keys inválidas, push deshabilitado:', err.message);
+  }
 }
 
 async function notify(subscription, payload) {
