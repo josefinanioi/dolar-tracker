@@ -1,90 +1,75 @@
 const router = require('express').Router();
-const { getLatest } = require('../scheduler');
+const { getLatest, setLatest } = require('../scheduler');
 const { getHistory } = require('../storage');
-const { fetchBancos } = require('../dolar');
+const { fetchCotizaciones } = require('../dolar');
 
-// ── Cache de bancos en memoria ──────────────────────────────────────────────
-// updatedAt sólo se actualiza en éxito. lastErrorAt se actualiza en cada fallo
-// para implementar backoff de 1 min antes de reintentar.
-let bancosCache = {
-  data:         [],       // última respuesta válida
-  updatedAt:    null,     // cuándo se obtuvo esa respuesta
-  lastErrorAt:  null,     // cuándo ocurrió el último error
-};
+// ── Caché de cotizaciones ─────────────────────────────────────────────────────
+//
+// DISEÑO:
+//   - El scheduler actualiza el caché cada 5 min (para history y alertas).
+//   - PERO esta ruta también lo actualiza on-demand si el caché tiene > 2 min.
+//   - Resultado: máximo 2 min de staleness sin importar el scheduler.
+//   - Si DolarAPI falla, se sirven datos rancios con flag { stale: true }.
+//   - Si no hay datos en absoluto, 503.
+//
+// LOGGING:
+//   - Cada request loguea si sirvió desde caché o hizo fetch.
+//   - Cada fetch loguea los valores exactos retornados.
 
-const BANCOS_TTL    = 10 * 60 * 1000;  // 10 min: tiempo de vida del caché
-const BANCOS_RETRY  =  1 * 60 * 1000;  // 1 min: backoff entre reintentos fallidos
+const CACHE_TTL = 2 * 60 * 1000;  // 2 minutos
 
-/**
- * Devuelve datos de bancos con caché.
- * - Si el caché está fresco → retorna sin tocar la red.
- * - Si el caché expiró → intenta refrescar.
- *   - Éxito: guarda y devuelve nuevos datos.
- *   - Error: si hay datos viejos, los devuelve (datos rancios > vacío).
- *            si no hay datos viejos, re-lanza el error → route devuelve 503.
- * - Si el último error fue hace < BANCOS_RETRY → no reintenta (backoff).
- */
-async function getBancos() {
-  const now = Date.now();
-
-  // Caché fresco y con datos
-  if (bancosCache.data.length > 0 && bancosCache.updatedAt && now - bancosCache.updatedAt < BANCOS_TTL) {
-    return bancosCache.data;
-  }
-
-  // Backoff: no reintentar si el error fue reciente
-  if (bancosCache.lastErrorAt && now - bancosCache.lastErrorAt < BANCOS_RETRY) {
-    if (bancosCache.data.length > 0) {
-      console.log('[getBancos] Backoff activo — devolviendo caché vencido');
-      return bancosCache.data;
-    }
-    throw new Error('Fuente de datos temporalmente no disponible (backoff activo)');
-  }
-
-  // Intentar refrescar
-  try {
-    const freshData = await fetchBancos();
-    bancosCache.data        = freshData;
-    bancosCache.updatedAt   = now;
-    bancosCache.lastErrorAt = null;
-    return freshData;
-  } catch (err) {
-    bancosCache.lastErrorAt = now;
-    console.error('[getBancos] Fallo al refrescar:', err.message);
-
-    if (bancosCache.data.length > 0) {
-      console.warn('[getBancos] Devolviendo datos rancios de', new Date(bancosCache.updatedAt).toLocaleTimeString('es-AR'));
-      return bancosCache.data;
-    }
-
-    // No hay nada en caché → propagar el error
-    throw err;
-  }
+function getCacheAge() {
+  const data = getLatest();
+  if (!data?.updatedAt) return Infinity;
+  return Date.now() - new Date(data.updatedAt).getTime();
 }
 
-// ── Rutas ───────────────────────────────────────────────────────────────────
-
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   res.set('Cache-Control', 'no-store');
-  const data = getLatest();
-  if (!data) return res.status(503).json({ error: 'Datos no disponibles aún. Intentá en unos segundos.' });
-  res.json(data);
+
+  const age     = getCacheAge();
+  const current = getLatest();
+  const ageStr  = isFinite(age) ? `${Math.round(age / 1000)}s` : '∞';
+
+  // ── Caché fresco → devolver sin tocar la red ──────────────────────────────
+  if (current && age < CACHE_TTL) {
+    console.log(`[GET /cotizaciones] Caché fresco (${ageStr}) → directo`);
+    return res.json(current);
+  }
+
+  // ── Caché vencido o vacío → fetch on-demand ───────────────────────────────
+  console.log(`[GET /cotizaciones] Caché ${current ? `vencido (${ageStr})` : 'vacío'} → fetching DolarAPI...`);
+
+  try {
+    const cotizaciones = await fetchCotizaciones();
+    const fresh = { cotizaciones, updatedAt: new Date().toISOString() };
+    setLatest(fresh);
+
+    // Log de los valores reales para verificar que cambian
+    console.log(`[GET /cotizaciones] ✅ Actualizado OK:`,
+      cotizaciones.map(c => `${c.nombre}: compra=$${c.compra} venta=$${c.venta}`).join(' | ')
+    );
+
+    return res.json(fresh);
+  } catch (err) {
+    console.error('[GET /cotizaciones] ❌ Error al hacer fetch:', err.message);
+
+    // Si hay datos rancios disponibles, servirlos antes que nada
+    if (current) {
+      console.warn('[GET /cotizaciones] ⚠️ Sirviendo datos rancios de', current.updatedAt);
+      return res.json({ ...current, stale: true });
+    }
+
+    return res.status(503).json({
+      error:  'No se pudieron obtener las cotizaciones.',
+      detail: err.message,
+    });
+  }
 });
 
 router.get('/historial', (req, res) => {
   res.set('Cache-Control', 'no-store');
   res.json(getHistory());
-});
-
-router.get('/bancos', async (req, res) => {
-  res.set('Cache-Control', 'no-store');
-  try {
-    const bancos = await getBancos();
-    res.json(bancos);
-  } catch (err) {
-    console.error('[GET /bancos] Error:', err.message);
-    res.status(503).json({ error: 'No se pudieron obtener cotizaciones de bancos.', detail: err.message });
-  }
 });
 
 module.exports = router;

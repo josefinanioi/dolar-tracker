@@ -1,23 +1,27 @@
 // ─── API client ───────────────────────────────────────────────────
-// Intenta el backend propio primero; si no está configurado o falla,
-// llama a DolarAPI directamente (modo standalone).
+//
+// DISEÑO INTENCIONAL:
+//   - Fuente única: SIEMPRE el backend propio (CONFIG.BACKEND_URL).
+//   - SIN fallback a DolarAPI desde el browser.
+//     Motivo: dos fuentes distintas producen timestamps diferentes por tipo de
+//     dólar, que el usuario ve como inconsistencia en la UI.
+//   - Si el backend no responde, se muestra error. No se inventan datos.
+//
+// Timeout de 15 s para cubrir el cold-start de Render (free tier).
 
 const TIPOS_VISIBLES = ['blue', 'oficial', 'bolsa', 'contadoconliqui'];
 const NOMBRE_MAP = { blue: 'Blue', oficial: 'Oficial', bolsa: 'MEP', contadoconliqui: 'CCL' };
 
-// Nunca usar caché del browser para datos de cotizaciones
+// Nunca usar caché HTTP para datos de cotizaciones
 const NO_CACHE = { cache: 'no-store' };
 
-// Agrega ?_t=<timestamp> para romper cachés intermedias (CDN, proxy, Render edge)
+// Agrega ?_t=<timestamp> para romper cachés de CDN/proxy intermedios
 function bust(url) {
   return `${url}${url.includes('?') ? '&' : '?'}_t=${Date.now()}`;
 }
 
-/**
- * fetch con timeout via AbortController.
- * Si el servidor no responde en `ms` milisegundos, lanza AbortError.
- */
-function fetchWithTimeout(url, options = {}, ms = 8000) {
+// fetch con AbortController para garantizar timeout real
+function fetchWithTimeout(url, options = {}, ms = 15000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   return fetch(url, { ...options, signal: controller.signal })
@@ -25,44 +29,42 @@ function fetchWithTimeout(url, options = {}, ms = 8000) {
 }
 
 // ─── Cotizaciones ─────────────────────────────────────────────────
+//
+// Retorna el objeto completo del backend: { cotizaciones, updatedAt, stale? }
+// El llamador usa `updatedAt` para mostrar UN timestamp unificado en el UI,
+// en lugar del `fechaActualizacion` por tipo que viene de DolarAPI.
 
 async function fetchCotizaciones() {
-  // 1. Intentar backend propio (timeout 8s para no bloquear en cold-start de Render)
-  if (CONFIG.BACKEND_URL) {
-    try {
-      const res = await fetchWithTimeout(
-        bust(`${CONFIG.BACKEND_URL}/api/cotizaciones`),
-        NO_CACHE,
-        8000
-      );
-      if (res.ok) {
-        const data = await res.json();
-        return data.cotizaciones || data;
-      }
-      console.warn(`[fetchCotizaciones] Backend respondió ${res.status} — usando DolarAPI`);
-    } catch (err) {
-      const reason = err.name === 'AbortError' ? 'timeout (8s)' : err.message;
-      console.warn(`[fetchCotizaciones] Backend no disponible (${reason}) — usando DolarAPI`);
-    }
+  if (!CONFIG.BACKEND_URL) {
+    throw new Error('CONFIG.BACKEND_URL no está definido');
   }
 
-  // 2. Fallback directo a DolarAPI (timeout 12s)
-  const res = await fetchWithTimeout(
-    bust(`${CONFIG.DOLAR_API_URL}/dolares`),
-    NO_CACHE,
-    12000
-  );
-  if (!res.ok) throw new Error(`DolarAPI respondió ${res.status}`);
+  const url = bust(`${CONFIG.BACKEND_URL}/api/cotizaciones`);
+  console.log('[api] fetchCotizaciones →', url);
+
+  let res;
+  try {
+    res = await fetchWithTimeout(url, NO_CACHE, 15000);
+  } catch (err) {
+    const reason = err.name === 'AbortError'
+      ? 'timeout de 15s (Render puede estar en cold-start)'
+      : err.message;
+    console.error('[api] fetchCotizaciones ✗', reason);
+    throw new Error(`No se pudo conectar al backend: ${reason}`);
+  }
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    console.error(`[api] fetchCotizaciones ✗ HTTP ${res.status}:`, body.slice(0, 200));
+    throw new Error(`Backend respondió ${res.status}`);
+  }
+
   const data = await res.json();
-  return data
-    .filter(d => TIPOS_VISIBLES.includes(d.casa))
-    .map(d => ({
-      casa:               d.casa,
-      nombre:             NOMBRE_MAP[d.casa] || d.nombre,
-      compra:             d.compra ?? null,
-      venta:              d.venta  ?? null,
-      fechaActualizacion: d.fechaActualizacion,
-    }));
+  console.log('[api] fetchCotizaciones ✓ updatedAt:', data.updatedAt,
+    '| stale:', data.stale ?? false,
+    '| tipos:', (data.cotizaciones || []).map(c => `${c.nombre}=$${c.venta}`).join(', '));
+
+  return data; // { cotizaciones: [...], updatedAt: "...", stale?: true }
 }
 
 // ─── Historial ────────────────────────────────────────────────────
@@ -76,50 +78,11 @@ async function fetchHistorial() {
       8000
     );
     if (res.ok) return await res.json();
+    console.warn('[api] fetchHistorial HTTP', res.status);
   } catch (err) {
-    const reason = err.name === 'AbortError' ? 'timeout' : err.message;
-    console.warn(`[fetchHistorial] ${reason}`);
+    console.warn('[api] fetchHistorial ✗', err.name === 'AbortError' ? 'timeout' : err.message);
   }
   return [];
-}
-
-// ─── Bancos ───────────────────────────────────────────────────────
-// IMPORTANTE: NO existe fallback directo al browser para Ambito porque
-// esa API no tiene cabeceras CORS — la petición sería bloqueada siempre.
-// El único origen confiable es el backend (servidor Node, sin CORS).
-//
-// Retorna:
-//   Array<{banco, compra, venta}>  → datos válidos
-//   null                           → error (backend no disponible o fuente caída)
-
-async function fetchBancos() {
-  if (!CONFIG.BACKEND_URL) return null;
-
-  try {
-    const res = await fetchWithTimeout(
-      bust(`${CONFIG.BACKEND_URL}/api/cotizaciones/bancos`),
-      NO_CACHE,
-      10000
-    );
-
-    if (res.ok) {
-      const data = await res.json();
-      // Sanity check: la respuesta debe ser un array
-      if (!Array.isArray(data)) {
-        console.warn('[fetchBancos] Respuesta inesperada del backend:', data);
-        return null;
-      }
-      return data;
-    }
-
-    // 503 = fuente (Ambito) caída; el backend ya lo loguea
-    console.warn(`[fetchBancos] Backend respondió ${res.status} — fuente de bancos no disponible`);
-    return null;
-  } catch (err) {
-    const reason = err.name === 'AbortError' ? 'timeout (10s)' : err.message;
-    console.warn(`[fetchBancos] Error: ${reason}`);
-    return null;
-  }
 }
 
 // ─── Push / Alertas ───────────────────────────────────────────────

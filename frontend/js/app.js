@@ -3,7 +3,7 @@
 const state = {
   cotizaciones: [],
   history:      [],
-  lastUpdate:   null,
+  lastUpdate:   null,   // Date del updatedAt que devolvió el backend
 };
 
 // ══════════════════════════════════════════════════════════════════
@@ -24,10 +24,16 @@ function formatPrice(n) {
 
 /**
  * Renderiza las tarjetas de cotizaciones.
- * @param {Array}  cotizaciones  Datos nuevos a mostrar.
- * @param {Array}  prev          Datos anteriores para calcular variación.
- *                               Se pasa explícitamente para no depender del estado global,
- *                               que ya fue sobreescrito antes de llamar a esta función.
+ *
+ * Timestamp por card ELIMINADO intencionalmente:
+ *   El campo `fechaActualizacion` de DolarAPI es distinto por tipo (blue,
+ *   oficial, MEP, CCL se actualizan en momentos diferentes en su sistema).
+ *   Mostrar ese valor por card crea la ilusión de fuentes o cachés distintos.
+ *   El timestamp unificado se muestra UNA vez en la status bar.
+ *
+ * @param {Array} cotizaciones  Datos nuevos.
+ * @param {Array} prev          Datos anteriores para calcular variación.
+ *                              Se pasa explícitamente — state ya fue sobreescrito.
  */
 function renderCotizaciones(cotizaciones, prev = []) {
   const grid = document.getElementById('cotizaciones-grid');
@@ -45,10 +51,6 @@ function renderCotizaciones(cotizaciones, prev = []) {
       badge = `<span class="card-badge badge-neutral">sin cambio</span>`;
     }
 
-    const hora = d.fechaActualizacion
-      ? new Date(d.fechaActualizacion).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
-      : '';
-
     return `
       <div class="card" style="--accent:${color}">
         <div class="card-header">
@@ -65,10 +67,13 @@ function renderCotizaciones(cotizaciones, prev = []) {
             <span class="price-value venta">${formatPrice(d.venta)}</span>
           </div>
         </div>
-        ${hora ? `<div class="card-footer">Act. ${hora}</div>` : ''}
       </div>`;
   }).join('');
 }
+
+// ══════════════════════════════════════════════════════════════════
+// Renderizado — Alertas
+// ══════════════════════════════════════════════════════════════════
 
 function renderAlertas() {
   const list    = document.getElementById('alerts-list');
@@ -142,10 +147,18 @@ function showToast(msg, type = 'info', ms = 3500) {
 async function updateCotizaciones() {
   const btn = document.getElementById('refresh-btn');
   btn.classList.add('spinning');
-  setStatus('loading', 'Actualizando cotizaciones...');
+  setStatus('loading', 'Actualizando...');
 
   try {
-    const cotizaciones = await fetchCotizaciones();
+    // fetchCotizaciones retorna { cotizaciones, updatedAt, stale? }
+    const response      = await fetchCotizaciones();
+    const cotizaciones  = response.cotizaciones || response;
+
+    // updatedAt es el timestamp de CUANDO EL BACKEND HIZO EL FETCH a DolarAPI.
+    // Es uniforme para todos los tipos — no existe inconsistencia posible.
+    const updatedAt = response.updatedAt
+      ? new Date(response.updatedAt)
+      : new Date();
 
     // Evaluar alertas con los datos nuevos
     const disparadas = evalAlertas(cotizaciones);
@@ -163,20 +176,22 @@ async function updateCotizaciones() {
       renderAlertas();
     }
 
-    // IMPORTANTE: guardar el estado ANTERIOR antes de sobreescribir,
-    // para que renderCotizaciones pueda calcular la variación correctamente.
+    // Guardar estado ANTERIOR antes de sobreescribir para comparación de badges
     const prev         = state.cotizaciones;
     state.cotizaciones = cotizaciones;
-    state.lastUpdate   = new Date();
+    state.lastUpdate   = updatedAt;
 
     renderCotizaciones(cotizaciones, prev);
 
-    const hora = state.lastUpdate.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
-    setStatus('', `Actualizado a las ${hora}`);
+    // ── Status bar: timestamp unificado del backend ───────────────────────
+    const hora = updatedAt.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+    const staleTxt = response.stale ? ' · datos rancios' : '';
+    setStatus('', `Actualizado a las ${hora}${staleTxt}`);
+
   } catch (err) {
-    console.error('[updateCotizaciones]', err);
+    console.error('[updateCotizaciones]', err.message);
     setStatus('error', 'Error al obtener cotizaciones');
-    showToast('No se pudieron cargar las cotizaciones', 'error');
+    showToast(`Error: ${err.message}`, 'error', 6000);
   } finally {
     btn.classList.remove('spinning');
   }
@@ -191,128 +206,6 @@ async function updateHistorial() {
   } catch (err) {
     console.warn('[updateHistorial]', err.message);
   }
-}
-
-// ══════════════════════════════════════════════════════════════════
-// Tabla de bancos
-// ══════════════════════════════════════════════════════════════════
-
-const bancosState = { data: [], sortCol: 'venta', sortDir: 'asc' };
-
-/**
- * Renderiza la tabla de bancos.
- * @param {Array|null} data
- *   - Array con elementos → mostrar tabla
- *   - Array vacío         → mostrar "sin datos"
- *   - null                → mostrar error (backend o fuente caída)
- */
-function renderBancos(data) {
-  const section   = document.getElementById('bancos-section');
-  const tbody     = document.getElementById('bancos-tbody');
-  const updatedEl = document.getElementById('bancos-updated');
-
-  section.style.display = '';   // siempre visible cuando se llama esta función
-
-  if (data === null) {
-    tbody.innerHTML = `
-      <tr>
-        <td colspan="3" class="bancos-status-row bancos-status-error">
-          ⚠️ No se pudieron obtener los datos. La fuente puede estar temporalmente inaccesible.
-        </td>
-      </tr>`;
-    updatedEl.textContent = 'Sin datos';
-    bancosState.data = [];
-    return;
-  }
-
-  if (data.length === 0) {
-    tbody.innerHTML = `
-      <tr>
-        <td colspan="3" class="bancos-status-row">
-          Sin datos disponibles en este momento.
-        </td>
-      </tr>`;
-    updatedEl.textContent = '';
-    bancosState.data = [];
-    return;
-  }
-
-  bancosState.data = data;
-  _paintBancos();
-
-  const hora = new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
-  updatedEl.textContent = `Act. ${hora}`;
-}
-
-function _paintBancos() {
-  const { data, sortCol, sortDir } = bancosState;
-  if (!data.length) return;
-
-  const mul    = sortDir === 'asc' ? 1 : -1;
-  const sorted = [...data].sort((a, b) => {
-    const av = a[sortCol] ?? Infinity;
-    const bv = b[sortCol] ?? Infinity;
-    return (av - bv) * mul;
-  });
-
-  const ventas   = sorted.map(b => b.venta).filter(Boolean);
-  const compras  = sorted.map(b => b.compra).filter(Boolean);
-  const minVenta  = Math.min(...ventas);
-  const maxCompra = Math.max(...compras);
-
-  document.getElementById('bancos-tbody').innerHTML = sorted.map(b => {
-    const ventaCls  = b.venta  === minVenta  ? ' best-buy'  : '';
-    const compraCls = b.compra === maxCompra ? ' best-sell' : '';
-    return `<tr>
-      <td class="col-banco">${b.banco}</td>
-      <td class="col-precio${compraCls}">${formatPrice(b.compra)}</td>
-      <td class="col-precio${ventaCls}">${formatPrice(b.venta)}</td>
-    </tr>`;
-  }).join('');
-
-  document.querySelectorAll('.bancos-table th.sortable').forEach(th => {
-    const col = th.dataset.col;
-    th.classList.toggle('active', col === sortCol);
-    th.classList.toggle('asc',   col === sortCol && sortDir === 'asc');
-    th.classList.toggle('desc',  col === sortCol && sortDir === 'desc');
-  });
-}
-
-function setupBancosSort() {
-  document.querySelectorAll('.bancos-table th.sortable').forEach(th => {
-    th.addEventListener('click', () => {
-      const col = th.dataset.col;
-      if (bancosState.sortCol === col) {
-        bancosState.sortDir = bancosState.sortDir === 'asc' ? 'desc' : 'asc';
-      } else {
-        bancosState.sortCol = col;
-        bancosState.sortDir = 'asc';
-      }
-      _paintBancos();
-    });
-  });
-}
-
-async function updateBancos() {
-  // Sin backend no hay manera de obtener datos de bancos (CORS impide llamar a Ambito desde browser)
-  if (!CONFIG.BACKEND_URL) {
-    document.getElementById('bancos-section').style.display = 'none';
-    return;
-  }
-
-  // Mostrar sección con estado de carga antes de hacer el fetch
-  const section = document.getElementById('bancos-section');
-  const tbody   = document.getElementById('bancos-tbody');
-  section.style.display = '';
-  tbody.innerHTML = `
-    <tr>
-      <td colspan="3" class="bancos-status-row bancos-status-loading">
-        Cargando cotizaciones de bancos…
-      </td>
-    </tr>`;
-
-  const data = await fetchBancos();   // nunca lanza — devuelve Array | null
-  renderBancos(data);
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -357,7 +250,6 @@ function handleResetAlerta(id) {
 
 async function toggleNotifications() {
   const perm = getNotifPermission();
-
   if (perm === 'unsupported') {
     showToast('Tu navegador no soporta notificaciones', 'error'); return;
   }
@@ -367,7 +259,6 @@ async function toggleNotifications() {
   if (perm === 'granted') {
     showToast('Notificaciones ya activadas ✓', 'info'); return;
   }
-
   const result = await requestNotifPermission();
   if (result === 'granted') {
     document.getElementById('notif-btn').classList.add('active');
@@ -404,8 +295,6 @@ function loadTheme() {
 function setupListeners() {
   document.getElementById('theme-btn').addEventListener('click', toggleTheme);
   document.getElementById('notif-btn').addEventListener('click', toggleNotifications);
-
-  // Un único listener en el botón de refresh que ejecuta todo
   document.getElementById('refresh-btn').addEventListener('click', refreshAll);
 
   document.getElementById('new-alert-btn').addEventListener('click', openModal);
@@ -430,7 +319,6 @@ function setupListeners() {
     if (!valor || valor <= 0) {
       showToast('Ingresá un valor válido', 'error'); return;
     }
-
     createAlerta({ tipo, campo, condicion, valor, repeating });
     closeModal();
     renderAlertas();
@@ -443,30 +331,25 @@ function setupListeners() {
   document.getElementById('chart-campo').addEventListener('change', () =>
     renderChart(state.history, document.getElementById('chart-tipo').value, document.getElementById('chart-campo').value)
   );
-
-  setupBancosSort();
 }
 
 // ══════════════════════════════════════════════════════════════════
 // Auto-refresh robusto
 // ══════════════════════════════════════════════════════════════════
 
-// Si al volver al tab los datos tienen más de STALE_MS, refrescar inmediatamente
 const STALE_MS = 2 * 60 * 1000;
 
 function refreshAll() {
   updateCotizaciones();
   updateHistorial();
-  updateBancos();
 }
 
 function setupAutoRefresh() {
-  // Ciclo periódico cada UPDATE_INTERVAL (5 min por defecto)
+  // Ciclo normal cada UPDATE_INTERVAL (5 min)
   setInterval(refreshAll, CONFIG.UPDATE_INTERVAL);
 
-  // Cuando el usuario vuelve al tab (celular en segundo plano, cambio de pestaña)
-  // el setInterval pudo haber sido pausado/throttleado por el browser.
-  // Si los datos están viejos, refrescar inmediatamente.
+  // Al volver al tab: refrescar si los datos tienen > STALE_MS de antigüedad.
+  // Cubre el caso donde el browser pausó/throttleó el setInterval en background.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
     const elapsed = state.lastUpdate ? Date.now() - state.lastUpdate.getTime() : Infinity;
@@ -476,7 +359,7 @@ function setupAutoRefresh() {
     }
   });
 
-  // Cubre edge cases de desktop (volver al foco de la ventana)
+  // Edge case desktop: foco de ventana
   window.addEventListener('focus', () => {
     const elapsed = state.lastUpdate ? Date.now() - state.lastUpdate.getTime() : Infinity;
     if (elapsed > STALE_MS) refreshAll();
@@ -499,7 +382,6 @@ async function init() {
 
   await updateCotizaciones();
   await updateHistorial();
-  updateBancos();
   renderAlertas();
 
   setupAutoRefresh();
