@@ -183,6 +183,82 @@ async function updateHistorial() {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// Tabla de bancos
+// ══════════════════════════════════════════════════════════════════
+
+const bancosState = { data: [], sortCol: 'venta', sortDir: 'asc' };
+
+function renderBancos(data) {
+  const section = document.getElementById('bancos-section');
+  if (!data || data.length === 0) { section.style.display = 'none'; return; }
+  section.style.display = '';
+
+  bancosState.data = data;
+  _paintBancos();
+
+  const hora = new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+  document.getElementById('bancos-updated').textContent = `Act. ${hora}`;
+}
+
+function _paintBancos() {
+  const { data, sortCol, sortDir } = bancosState;
+  const mul = sortDir === 'asc' ? 1 : -1;
+  const sorted = [...data].sort((a, b) => {
+    const av = a[sortCol] ?? Infinity;
+    const bv = b[sortCol] ?? Infinity;
+    return (av - bv) * mul;
+  });
+
+  // Rangos para highlight
+  const ventas  = sorted.map(b => b.venta).filter(Boolean);
+  const compras = sorted.map(b => b.compra).filter(Boolean);
+  const minVenta  = Math.min(...ventas);
+  const maxCompra = Math.max(...compras);
+
+  document.getElementById('bancos-tbody').innerHTML = sorted.map(b => {
+    const ventaCls  = b.venta  === minVenta  ? ' best-buy'  : '';
+    const compraCls = b.compra === maxCompra ? ' best-sell' : '';
+    return `<tr>
+      <td class="col-banco">${b.banco}</td>
+      <td class="col-precio${compraCls}">${formatPrice(b.compra)}</td>
+      <td class="col-precio${ventaCls}">${formatPrice(b.venta)}</td>
+    </tr>`;
+  }).join('');
+
+  // Actualizar clases de headers
+  document.querySelectorAll('.bancos-table th.sortable').forEach(th => {
+    const col = th.dataset.col;
+    th.classList.toggle('active', col === sortCol);
+    th.classList.toggle('asc',  col === sortCol && sortDir === 'asc');
+    th.classList.toggle('desc', col === sortCol && sortDir === 'desc');
+  });
+}
+
+function setupBancosSort() {
+  document.querySelectorAll('.bancos-table th.sortable').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.col;
+      if (bancosState.sortCol === col) {
+        bancosState.sortDir = bancosState.sortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        bancosState.sortCol = col;
+        bancosState.sortDir = 'asc';
+      }
+      _paintBancos();
+    });
+  });
+}
+
+async function updateBancos() {
+  try {
+    const bancos = await fetchBancos();
+    renderBancos(bancos);
+  } catch (err) {
+    console.warn('Bancos no disponibles:', err.message);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
 // Modal de alerta
 // ══════════════════════════════════════════════════════════════════
 
@@ -313,6 +389,11 @@ function setupListeners() {
   document.getElementById('chart-campo').addEventListener('change', () =>
     renderChart(state.history, document.getElementById('chart-tipo').value, document.getElementById('chart-campo').value)
   );
+
+  // Refresh también actualiza bancos
+  document.getElementById('refresh-btn').addEventListener('click', updateBancos);
+
+  setupBancosSort();
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -331,9 +412,14 @@ async function init() {
 
   await updateCotizaciones();
   await updateHistorial();
+  updateBancos();   // sin await: carga en paralelo, no bloquea la UI
   renderAlertas();
 
-  setInterval(() => { updateCotizaciones(); updateHistorial(); }, CONFIG.UPDATE_INTERVAL);
+  setInterval(() => {
+    updateCotizaciones();
+    updateHistorial();
+    updateBancos();
+  }, CONFIG.UPDATE_INTERVAL);
 }
 
 document.readyState === 'loading'

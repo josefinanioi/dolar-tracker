@@ -81,3 +81,28 @@ async function apiDeleteAlerta(id) {
     await fetch(`${CONFIG.BACKEND_URL}/api/alertas/${id}`, { method: 'DELETE' });
   } catch { /* sin backend */ }
 }
+
+async function fetchBancos() {
+  // Intenta backend propio primero (tiene caché de 10 min)
+  if (CONFIG.BACKEND_URL) {
+    try {
+      const res = await fetch(`${CONFIG.BACKEND_URL}/api/cotizaciones/bancos`);
+      if (res.ok) return await res.json();
+    } catch { /* continúa con Ambito directo */ }
+  }
+  // Fallback: Ambito directo (puede fallar por CORS en algunos navegadores)
+  try {
+    const res = await fetch('https://mercados.ambito.com/dolar/oficial/bancos/variacion');
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (!data?.tabla || data.tabla.length < 2) return [];
+    return data.tabla.slice(1)
+      .map(r => ({
+        banco:  String(r[0] ?? '').replace(/^Banco\s+/i, '').trim(),
+        compra: parseFloat(String(r[1] ?? '').replace(/[.$]/g, '').replace(',', '.')) || null,
+        venta:  parseFloat(String(r[2] ?? '').replace(/[.$]/g, '').replace(',', '.')) || null,
+      }))
+      .filter(b => b.venta !== null)
+      .sort((a, b) => a.venta - b.venta);
+  } catch { return []; }
+}
