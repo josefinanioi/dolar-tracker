@@ -397,6 +397,43 @@ function setupListeners() {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// Auto-refresh robusto
+// ══════════════════════════════════════════════════════════════════
+
+// Umbral: si hace más de este tiempo sin actualizar, refrescar al volver al tab
+const STALE_MS = 2 * 60 * 1000; // 2 minutos
+
+function refreshAll() {
+  updateCotizaciones();
+  updateHistorial();
+  updateBancos();
+}
+
+function setupAutoRefresh() {
+  // Fix #2: setInterval normal para el ciclo de 5 minutos.
+  // No usar async en el callback — cada función maneja sus propios errores internamente.
+  setInterval(refreshAll, CONFIG.UPDATE_INTERVAL);
+
+  // Fix #2b: visibilitychange — cuando el usuario vuelve al tab (o desbloquea el celular),
+  // el setInterval puede haber sido pausado por el browser. Refrescamos si los datos
+  // tienen más de STALE_MS de antigüedad.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    const sinceUpdate = state.lastUpdate ? Date.now() - state.lastUpdate.getTime() : Infinity;
+    if (sinceUpdate > STALE_MS) {
+      console.log(`[auto-refresh] Tab visible con datos de ${Math.round(sinceUpdate/1000)}s → refrescando`);
+      refreshAll();
+    }
+  });
+
+  // Fix #2c: focus en ventana (cubre edge cases de desktop)
+  window.addEventListener('focus', () => {
+    const sinceUpdate = state.lastUpdate ? Date.now() - state.lastUpdate.getTime() : Infinity;
+    if (sinceUpdate > STALE_MS) refreshAll();
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════
 // Init
 // ══════════════════════════════════════════════════════════════════
 
@@ -412,14 +449,10 @@ async function init() {
 
   await updateCotizaciones();
   await updateHistorial();
-  updateBancos();   // sin await: carga en paralelo, no bloquea la UI
+  updateBancos();
   renderAlertas();
 
-  setInterval(() => {
-    updateCotizaciones();
-    updateHistorial();
-    updateBancos();
-  }, CONFIG.UPDATE_INTERVAL);
+  setupAutoRefresh();
 }
 
 document.readyState === 'loading'

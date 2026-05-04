@@ -21,16 +21,19 @@ async function getBancos() {
 }
 
 router.get('/', (req, res) => {
+  res.set('Cache-Control', 'no-store');
   const data = getLatest();
   if (!data) return res.status(503).json({ error: 'Datos no disponibles aún. Intentá en unos segundos.' });
   res.json(data);
 });
 
 router.get('/historial', (req, res) => {
+  res.set('Cache-Control', 'no-store');
   res.json(getHistory());
 });
 
 router.get('/bancos', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   const bancos = await getBancos();
   res.json(bancos);
 });

@@ -5,10 +5,20 @@
 const TIPOS_VISIBLES = ['blue', 'oficial', 'bolsa', 'contadoconliqui'];
 const NOMBRE_MAP = { blue: 'Blue', oficial: 'Oficial', bolsa: 'MEP', contadoconliqui: 'CCL' };
 
+// Fix #1: cache: 'no-store' en todos los GETs de datos.
+// Sin esto el browser devuelve la respuesta HTTP cacheada y los valores
+// nunca cambian aunque el servidor tenga datos nuevos.
+const NO_CACHE = { cache: 'no-store' };
+
+// Agrega ?_t=timestamp para romper cualquier caché intermedia (CDN, proxy, Render edge).
+function bust(url) {
+  return `${url}${url.includes('?') ? '&' : '?'}_t=${Date.now()}`;
+}
+
 async function fetchCotizaciones() {
   if (CONFIG.BACKEND_URL) {
     try {
-      const res = await fetch(`${CONFIG.BACKEND_URL}/api/cotizaciones`);
+      const res = await fetch(bust(`${CONFIG.BACKEND_URL}/api/cotizaciones`), NO_CACHE);
       if (res.ok) {
         const data = await res.json();
         return data.cotizaciones || data;
@@ -18,7 +28,7 @@ async function fetchCotizaciones() {
     }
   }
 
-  const res = await fetch(`${CONFIG.DOLAR_API_URL}/dolares`);
+  const res = await fetch(bust(`${CONFIG.DOLAR_API_URL}/dolares`), NO_CACHE);
   if (!res.ok) throw new Error(`DolarAPI error ${res.status}`);
   const data = await res.json();
   return data
@@ -35,7 +45,7 @@ async function fetchCotizaciones() {
 async function fetchHistorial() {
   if (!CONFIG.BACKEND_URL) return [];
   try {
-    const res = await fetch(`${CONFIG.BACKEND_URL}/api/cotizaciones/historial`);
+    const res = await fetch(bust(`${CONFIG.BACKEND_URL}/api/cotizaciones/historial`), NO_CACHE);
     if (res.ok) return await res.json();
   } catch { /* backend no disponible */ }
   return [];
@@ -44,7 +54,7 @@ async function fetchHistorial() {
 async function apiGetVapidKey() {
   if (!CONFIG.BACKEND_URL) return null;
   try {
-    const res = await fetch(`${CONFIG.BACKEND_URL}/api/push/vapid-public-key`);
+    const res = await fetch(`${CONFIG.BACKEND_URL}/api/push/vapid-public-key`, NO_CACHE);
     if (res.ok) return (await res.json()).key;
   } catch { /* sin backend */ }
   return null;
@@ -83,16 +93,14 @@ async function apiDeleteAlerta(id) {
 }
 
 async function fetchBancos() {
-  // Intenta backend propio primero (tiene caché de 10 min)
   if (CONFIG.BACKEND_URL) {
     try {
-      const res = await fetch(`${CONFIG.BACKEND_URL}/api/cotizaciones/bancos`);
+      const res = await fetch(bust(`${CONFIG.BACKEND_URL}/api/cotizaciones/bancos`), NO_CACHE);
       if (res.ok) return await res.json();
     } catch { /* continúa con Ambito directo */ }
   }
-  // Fallback: Ambito directo (puede fallar por CORS en algunos navegadores)
   try {
-    const res = await fetch('https://mercados.ambito.com/dolar/oficial/bancos/variacion');
+    const res = await fetch(bust('https://mercados.ambito.com/dolar/oficial/bancos/variacion'), NO_CACHE);
     if (!res.ok) return [];
     const data = await res.json();
     if (!data?.tabla || data.tabla.length < 2) return [];
