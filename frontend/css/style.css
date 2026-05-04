@@ -430,6 +430,22 @@ body {
   font-weight: 700;
 }
 
+/* Filas de estado: cargando / sin datos / error */
+.bancos-status-row {
+  text-align: center !important;
+  color: var(--muted);
+  padding: 1.5rem 1rem !important;
+  font-size: .84rem;
+  white-space: normal !important;
+}
+.bancos-status-loading {
+  color: var(--subtle);
+  font-style: italic;
+}
+.bancos-status-error {
+  color: var(--warning);
+}
+
 /* ══════════════════════════════════════════════════════════════════
    Utilities
    ══════════════════════════════════════════════════════════════════ */
