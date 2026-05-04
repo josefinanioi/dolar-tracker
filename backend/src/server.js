@@ -6,8 +6,17 @@ const { start: startScheduler } = require('./scheduler');
 
 const app = express();
 
+const allowedOrigins = process.env.FRONTEND_URL
+  ? process.env.FRONTEND_URL.split(',').map(o => o.trim())
+  : ['*'];
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || '*',
+  origin: (origin, cb) => {
+    // Permitir requests sin origin (curl, Postman, apps móviles)
+    if (!origin) return cb(null, true);
+    if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) return cb(null, true);
+    cb(new Error(`CORS bloqueado para origin: ${origin}`));
+  },
   credentials: true,
 }));
 app.use(express.json());
