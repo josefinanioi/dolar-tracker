@@ -169,23 +169,23 @@
         <div class="form-group">
           <label>Tipo de alerta</label>
           <div class="alert-type-tabs" role="tablist">
-            <button type="button" class="tab-btn active" data-tipAlerta="umbral" role="tab" aria-selected="true">
+            <button type="button" class="tab-btn active" data-tip-alerta="umbral" role="tab" aria-selected="true">
               Umbral
             </button>
-            <button type="button" class="tab-btn" data-tipAlerta="variacion" role="tab" aria-selected="false">
+            <button type="button" class="tab-btn" data-tip-alerta="variacion" role="tab" aria-selected="false">
               Variación %
             </button>
-            <button type="button" class="tab-btn" data-tipAlerta="extremo" role="tab" aria-selected="false">
+            <button type="button" class="tab-btn" data-tip-alerta="extremo" role="tab" aria-selected="false">
               Mín/Máx
             </button>
-            <button type="button" class="tab-btn" data-tipAlerta="tendencia" role="tab" aria-selected="false">
+            <button type="button" class="tab-btn" data-tip-alerta="tendencia" role="tab" aria-selected="false">
               Tendencia
             </button>
           </div>
         </div>
 
         <!-- ── Campos: Umbral ── -->
-        <div class="alert-fields" data-tipAlerta="umbral">
+        <div class="alert-fields" data-tip-alerta="umbral">
           <div class="form-group">
             <label for="alert-condicion">Condición</label>
             <select id="alert-condicion" class="form-control" required>
@@ -205,7 +205,7 @@
         </div>
 
         <!-- ── Campos: Variación % ── -->
-        <div class="alert-fields hidden" data-tipAlerta="variacion">
+        <div class="alert-fields hidden" data-tip-alerta="variacion">
           <p class="fields-desc">Avisá cuando el precio cambie más de X% respecto al inicio del período.</p>
           <div class="form-row">
             <div class="form-group">
@@ -232,7 +232,7 @@
         </div>
 
         <!-- ── Campos: Extremo ── -->
-        <div class="alert-fields hidden" data-tipAlerta="extremo">
+        <div class="alert-fields hidden" data-tip-alerta="extremo">
           <p class="fields-desc">Avisá cuando el precio toque el mínimo o máximo del historial acumulado.</p>
           <div class="form-row">
             <div class="form-group">
@@ -253,7 +253,7 @@
         </div>
 
         <!-- ── Campos: Tendencia ── -->
-        <div class="alert-fields hidden" data-tipAlerta="tendencia">
+        <div class="alert-fields hidden" data-tip-alerta="tendencia">
           <p class="fields-desc">Avisá cuando el precio suba o baje de forma consecutiva en varias mediciones.</p>
           <div class="form-row">
             <div class="form-group">

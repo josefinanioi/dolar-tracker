@@ -368,6 +368,11 @@ body {
   width: 100%; max-width: 440px;
   box-shadow: var(--shadow);
   animation: slideUp .2s ease;
+  /* Limitar altura y permitir scroll interno */
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
+  overflow: hidden;
 }
 @keyframes slideUp { from { opacity:0; transform:translateY(14px) } to { opacity:1; transform:none } }
 
@@ -375,10 +380,31 @@ body {
   display: flex; align-items: center; justify-content: space-between;
   padding: 1rem 1.25rem;
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0; /* nunca se comprime */
 }
 .modal-header h3 { font-size: 1rem; font-weight: 600; }
-.modal-body { padding: 1.25rem; display: flex; flex-direction: column; gap: .9rem; }
-.modal-footer { display: flex; justify-content: flex-end; gap: .6rem; margin-top: .25rem; }
+
+/* El form ocupa el espacio restante y scrollea */
+.modal-body {
+  padding: 1.25rem;
+  display: flex; flex-direction: column; gap: .9rem;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Footer sticky: siempre visible al final del área scrolleable */
+.modal-footer {
+  display: flex; justify-content: flex-end; gap: .6rem;
+  position: sticky;
+  bottom: 0;
+  /* Compensar el padding del .modal-body para cubrir el ancho completo */
+  margin: 0 -1.25rem -1.25rem;
+  padding: .75rem 1.25rem;
+  background: var(--bg-card);
+  border-top: 1px solid var(--border);
+  z-index: 1;
+}
 
 /* ══════════════════════════════════════════════════════════════════
    Forms
