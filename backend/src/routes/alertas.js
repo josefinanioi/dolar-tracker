@@ -1,8 +1,9 @@
 const router = require('express').Router();
 const storage = require('../storage');
 
-const TIPOS_VALIDOS = ['blue', 'oficial', 'bolsa', 'contadoconliqui'];
-const CAMPOS_VALIDOS = ['compra', 'venta'];
+// Tipos válidos: ahora usando las claves del nuevo formato unificado
+const TIPOS_VALIDOS     = ['blue', 'oficial', 'mep', 'ccl'];
+const CAMPOS_VALIDOS    = ['compra', 'venta'];
 const CONDICIONES_VALIDAS = ['baja', 'sube'];
 
 router.get('/:userId', (req, res) => {
@@ -16,7 +17,7 @@ router.post('/', (req, res) => {
   if (!userId || !tipo || !campo || !condicion || valor == null)
     return res.status(400).json({ error: 'Faltan campos: userId, tipo, campo, condicion, valor' });
   if (!TIPOS_VALIDOS.includes(tipo))
-    return res.status(400).json({ error: `tipo inválido. Valores: ${TIPOS_VALIDOS.join(', ')}` });
+    return res.status(400).json({ error: `tipo inválido. Valores válidos: ${TIPOS_VALIDOS.join(', ')}` });
   if (!CAMPOS_VALIDOS.includes(campo))
     return res.status(400).json({ error: 'campo debe ser "compra" o "venta"' });
   if (!CONDICIONES_VALIDAS.includes(condicion))
@@ -27,7 +28,7 @@ router.post('/', (req, res) => {
     tipo,
     campo,
     condicion,
-    valor: parseFloat(valor),
+    valor:     parseFloat(valor),
     repeating: Boolean(repeating),
   });
 

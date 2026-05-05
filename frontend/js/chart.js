@@ -1,28 +1,33 @@
 // ─── Gráfico de historial ─────────────────────────────────────────
+//
+// Formato de los snapshots en history (nuevo):
+//   { ts: number, oficial: {compra, venta}, blue: {...}, mep: {...}, ccl: {...} }
+//
+// Los selects del HTML usan values: 'blue', 'oficial', 'mep', 'ccl'
 
 let chartInst = null;
 
 const CHART_COLORS = {
-  blue:            '#f59e0b',
-  oficial:         '#3b82f6',
-  bolsa:           '#8b5cf6',
-  contadoconliqui: '#10b981',
+  blue:    '#f59e0b',
+  oficial: '#3b82f6',
+  mep:     '#8b5cf6',
+  ccl:     '#10b981',
 };
 
 const CHART_LABELS = {
-  blue:            'Dólar Blue',
-  oficial:         'Dólar Oficial',
-  bolsa:           'Dólar MEP',
-  contadoconliqui: 'Dólar CCL',
+  blue:    'Dólar Blue',
+  oficial: 'Dólar Oficial',
+  mep:     'Dólar MEP',
+  ccl:     'Dólar CCL',
 };
 
 function renderChart(history, tipo, campo) {
   const canvas  = document.getElementById('history-chart');
   const emptyEl = document.getElementById('chart-empty');
 
-  const relevant = (history || []).filter(s =>
-    s.cotizaciones && s.cotizaciones.some(c => c.casa === tipo)
-  );
+  // Filtrar solo snapshots que tengan datos para el tipo seleccionado
+  // El snapshot nuevo es { ts, oficial, blue, mep, ccl }
+  const relevant = (history || []).filter(s => s[tipo] != null);
 
   if (relevant.length < 2) {
     canvas.style.display = 'none';
@@ -35,13 +40,13 @@ function renderChart(history, tipo, campo) {
   emptyEl.classList.add('hidden');
 
   const labels = relevant.map(s => {
-    const d = new Date(s.ts || s.timestamp);
+    const d = new Date(s.ts);
     return d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
   });
 
   const data = relevant.map(s => {
-    const d = s.cotizaciones.find(c => c.casa === tipo);
-    return d ? (d[campo] ?? null) : null;
+    const prices = s[tipo];                   // { compra, venta }
+    return prices ? (prices[campo] ?? null) : null;
   });
 
   const color    = CHART_COLORS[tipo] || '#3b82f6';
@@ -55,20 +60,20 @@ function renderChart(history, tipo, campo) {
     data: {
       labels,
       datasets: [{
-        label:           `${CHART_LABELS[tipo]} – ${campoLbl}`,
+        label:            `${CHART_LABELS[tipo] || tipo} — ${campoLbl}`,
         data,
-        borderColor:     color,
-        backgroundColor: `${color}20`,
-        borderWidth:     2,
-        fill:            true,
-        tension:         0.3,
-        pointRadius:     relevant.length > 30 ? 0 : 3,
+        borderColor:      color,
+        backgroundColor:  `${color}20`,
+        borderWidth:      2,
+        fill:             true,
+        tension:          0.3,
+        pointRadius:      relevant.length > 30 ? 0 : 3,
         pointHoverRadius: 5,
-        spanGaps:        true,
+        spanGaps:         true,
       }],
     },
     options: {
-      responsive: true,
+      responsive:          true,
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
@@ -83,9 +88,12 @@ function renderChart(history, tipo, campo) {
         },
       },
       scales: {
-        x: { grid: { color: grid }, ticks: { color: tick, maxTicksLimit: 8, maxRotation: 0 } },
+        x: {
+          grid:  { color: grid },
+          ticks: { color: tick, maxTicksLimit: 8, maxRotation: 0 },
+        },
         y: {
-          grid: { color: grid },
+          grid:  { color: grid },
           ticks: { color: tick, callback: v => `$${v.toLocaleString('es-AR')}` },
         },
       },
@@ -93,7 +101,7 @@ function renderChart(history, tipo, campo) {
   };
 
   if (chartInst) {
-    chartInst.data             = cfg.data;
+    chartInst.data                          = cfg.data;
     chartInst.options.scales.x.grid.color  = grid;
     chartInst.options.scales.x.ticks.color = tick;
     chartInst.options.scales.y.grid.color  = grid;

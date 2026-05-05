@@ -1,26 +1,26 @@
 // ─── API client ───────────────────────────────────────────────────
 //
-// DISEÑO INTENCIONAL:
-//   - Fuente única: SIEMPRE el backend propio (CONFIG.BACKEND_URL).
-//   - SIN fallback a DolarAPI desde el browser.
-//     Motivo: dos fuentes distintas producen timestamps diferentes por tipo de
-//     dólar, que el usuario ve como inconsistencia en la UI.
-//   - Si el backend no responde, se muestra error. No se inventan datos.
+// Fuente única: backend propio (CONFIG.BACKEND_URL → Render).
+// Sin fallback a DolarAPI desde el browser — una sola fuente, un solo timestamp.
 //
-// Timeout de 15 s para cubrir el cold-start de Render (free tier).
+// Respuesta esperada del backend:
+//   {
+//     updatedAt: "2024-01-15T14:30:00.000Z",   ← generado por el backend
+//     oficial:   { compra: 1000, venta: 1010 },
+//     blue:      { compra: 1100, venta: 1120 },
+//     mep:       { compra: 1080, venta: 1090 },
+//     ccl:       { compra: 1090, venta: 1100 },
+//     stale?:    true                            ← solo si el refresh falló
+//   }
 
-const TIPOS_VISIBLES = ['blue', 'oficial', 'bolsa', 'contadoconliqui'];
-const NOMBRE_MAP = { blue: 'Blue', oficial: 'Oficial', bolsa: 'MEP', contadoconliqui: 'CCL' };
-
-// Nunca usar caché HTTP para datos de cotizaciones
 const NO_CACHE = { cache: 'no-store' };
 
-// Agrega ?_t=<timestamp> para romper cachés de CDN/proxy intermedios
+// Agrega ?t=<timestamp> para romper cachés de CDN/proxy intermedios
 function bust(url) {
-  return `${url}${url.includes('?') ? '&' : '?'}_t=${Date.now()}`;
+  return `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
 }
 
-// fetch con AbortController para garantizar timeout real
+// fetch con AbortController — garantiza timeout real (no depende del browser)
 function fetchWithTimeout(url, options = {}, ms = 15000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
@@ -29,10 +29,6 @@ function fetchWithTimeout(url, options = {}, ms = 15000) {
 }
 
 // ─── Cotizaciones ─────────────────────────────────────────────────
-//
-// Retorna el objeto completo del backend: { cotizaciones, updatedAt, stale? }
-// El llamador usa `updatedAt` para mostrar UN timestamp unificado en el UI,
-// en lugar del `fechaActualizacion` por tipo que viene de DolarAPI.
 
 async function fetchCotizaciones() {
   if (!CONFIG.BACKEND_URL) {
@@ -47,10 +43,10 @@ async function fetchCotizaciones() {
     res = await fetchWithTimeout(url, NO_CACHE, 15000);
   } catch (err) {
     const reason = err.name === 'AbortError'
-      ? 'timeout de 15s (Render puede estar en cold-start)'
+      ? 'timeout 15s (Render puede estar en cold-start)'
       : err.message;
     console.error('[api] fetchCotizaciones ✗', reason);
-    throw new Error(`No se pudo conectar al backend: ${reason}`);
+    throw new Error(`Sin conexión al backend: ${reason}`);
   }
 
   if (!res.ok) {
@@ -60,11 +56,24 @@ async function fetchCotizaciones() {
   }
 
   const data = await res.json();
-  console.log('[api] fetchCotizaciones ✓ updatedAt:', data.updatedAt,
-    '| stale:', data.stale ?? false,
-    '| tipos:', (data.cotizaciones || []).map(c => `${c.nombre}=$${c.venta}`).join(', '));
 
-  return data; // { cotizaciones: [...], updatedAt: "...", stale?: true }
+  // Verificar que la respuesta tenga el formato esperado
+  if (!data.updatedAt || !data.oficial || !data.blue || !data.mep || !data.ccl) {
+    console.error('[api] fetchCotizaciones ✗ respuesta inesperada:', data);
+    throw new Error('Respuesta del backend con formato inválido');
+  }
+
+  console.log('[api] fetchCotizaciones ✓',
+    `updatedAt=${data.updatedAt}`,
+    `stale=${data.stale ?? false}`,
+    `oficial=$${data.oficial.venta}`,
+    `blue=$${data.blue.venta}`,
+    `mep=$${data.mep.venta}`,
+    `ccl=$${data.ccl.venta}`
+  );
+
+  return data;
+  // { updatedAt, oficial, blue, mep, ccl, stale? }
 }
 
 // ─── Historial ────────────────────────────────────────────────────
@@ -90,7 +99,9 @@ async function fetchHistorial() {
 async function apiGetVapidKey() {
   if (!CONFIG.BACKEND_URL) return null;
   try {
-    const res = await fetchWithTimeout(`${CONFIG.BACKEND_URL}/api/push/vapid-public-key`, NO_CACHE, 8000);
+    const res = await fetchWithTimeout(
+      `${CONFIG.BACKEND_URL}/api/push/vapid-public-key`, NO_CACHE, 8000
+    );
     if (res.ok) return (await res.json()).key;
   } catch { /* sin backend */ }
   return null;

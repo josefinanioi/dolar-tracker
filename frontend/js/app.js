@@ -1,70 +1,78 @@
 // ─── Dólar AR – Aplicación principal ─────────────────────────────
 
+// Estado global de la app
 const state = {
-  cotizaciones: [],
+  // cotizaciones: { oficial: {compra, venta}, blue, mep, ccl }
+  cotizaciones: {},
   history:      [],
-  lastUpdate:   null,   // Date del updatedAt que devolvió el backend
+  lastUpdate:   null,  // Date del updatedAt que devolvió el backend
 };
 
 // ══════════════════════════════════════════════════════════════════
-// Renderizado — Cotizaciones
+// Definición de los 4 tipos de dólar
 // ══════════════════════════════════════════════════════════════════
 
-const ACCENTS = {
-  blue:            '#f59e0b',
-  oficial:         '#3b82f6',
-  bolsa:           '#8b5cf6',
-  contadoconliqui: '#10b981',
-};
+const TIPOS = [
+  { key: 'blue',    label: 'Blue',    accent: '#f59e0b' },
+  { key: 'oficial', label: 'Oficial', accent: '#3b82f6' },
+  { key: 'mep',     label: 'MEP',     accent: '#8b5cf6' },
+  { key: 'ccl',     label: 'CCL',     accent: '#10b981' },
+];
+
+// ══════════════════════════════════════════════════════════════════
+// Helpers de formato
+// ══════════════════════════════════════════════════════════════════
 
 function formatPrice(n) {
   if (n == null) return '—';
   return `$${Math.round(n).toLocaleString('es-AR')}`;
 }
 
+// ══════════════════════════════════════════════════════════════════
+// Renderizado — Cotizaciones
+// ══════════════════════════════════════════════════════════════════
+
 /**
- * Renderiza las tarjetas de cotizaciones.
+ * Renderiza las 4 tarjetas de cotizaciones.
  *
- * Timestamp por card ELIMINADO intencionalmente:
- *   El campo `fechaActualizacion` de DolarAPI es distinto por tipo (blue,
- *   oficial, MEP, CCL se actualizan en momentos diferentes en su sistema).
- *   Mostrar ese valor por card crea la ilusión de fuentes o cachés distintos.
- *   El timestamp unificado se muestra UNA vez en la status bar.
- *
- * @param {Array} cotizaciones  Datos nuevos.
- * @param {Array} prev          Datos anteriores para calcular variación.
- *                              Se pasa explícitamente — state ya fue sobreescrito.
+ * @param {Object} data  Formato: { oficial, blue, mep, ccl }  — cada uno { compra, venta }
+ * @param {Object} prev  Idem, datos anteriores para calcular variación porcentual.
+ *                       Se pasa explícitamente para no depender del state, que ya fue sobreescrito.
  */
-function renderCotizaciones(cotizaciones, prev = []) {
+function renderCotizaciones(data, prev = {}) {
   const grid = document.getElementById('cotizaciones-grid');
-  grid.innerHTML = cotizaciones.map(d => {
-    const p     = prev.find(p => p.casa === d.casa);
-    const diff  = p?.venta && d.venta ? ((d.venta - p.venta) / p.venta) * 100 : null;
-    const color = ACCENTS[d.casa] || '#3b82f6';
+
+  grid.innerHTML = TIPOS.map(({ key, label, accent }) => {
+    const curr = data[key] || {};
+    const old  = prev[key] || {};
+
+    const diff = old.venta && curr.venta
+      ? ((curr.venta - old.venta) / old.venta) * 100
+      : null;
 
     let badge = '';
     if (diff !== null && Math.abs(diff) >= 0.01) {
       const cls  = diff > 0 ? 'badge-up' : 'badge-down';
       const sign = diff > 0 ? '+' : '';
       badge = `<span class="card-badge ${cls}">${sign}${diff.toFixed(2)}%</span>`;
-    } else if (p) {
+    } else if (old.venta !== undefined) {
       badge = `<span class="card-badge badge-neutral">sin cambio</span>`;
     }
 
     return `
-      <div class="card" style="--accent:${color}">
+      <div class="card" style="--accent:${accent}">
         <div class="card-header">
-          <span class="card-title">${d.nombre}</span>
+          <span class="card-title">${label}</span>
           ${badge}
         </div>
         <div class="card-prices">
           <div class="price-item">
             <span class="price-label">Compra</span>
-            <span class="price-value compra">${formatPrice(d.compra)}</span>
+            <span class="price-value compra">${formatPrice(curr.compra)}</span>
           </div>
           <div class="price-item">
             <span class="price-label">Venta</span>
-            <span class="price-value venta">${formatPrice(d.venta)}</span>
+            <span class="price-value venta">${formatPrice(curr.venta)}</span>
           </div>
         </div>
       </div>`;
@@ -150,43 +158,39 @@ async function updateCotizaciones() {
   setStatus('loading', 'Actualizando...');
 
   try {
-    // fetchCotizaciones retorna { cotizaciones, updatedAt, stale? }
-    const response      = await fetchCotizaciones();
-    const cotizaciones  = response.cotizaciones || response;
+    // fetchCotizaciones() retorna: { updatedAt, oficial, blue, mep, ccl, stale? }
+    const response = await fetchCotizaciones();
 
-    // updatedAt es el timestamp de CUANDO EL BACKEND HIZO EL FETCH a DolarAPI.
-    // Es uniforme para todos los tipos — no existe inconsistencia posible.
-    const updatedAt = response.updatedAt
-      ? new Date(response.updatedAt)
-      : new Date();
+    // Separar metadata del payload de cotizaciones
+    const { updatedAt, stale, ...cotizaciones } = response;
+    // cotizaciones = { oficial: {compra,venta}, blue: {...}, mep: {...}, ccl: {...} }
 
-    // Evaluar alertas con los datos nuevos
+    const updatedAtDate = updatedAt ? new Date(updatedAt) : new Date();
+
+    // Evaluar alertas con los datos nuevos (antes de sobreescribir state)
     const disparadas = evalAlertas(cotizaciones);
-    for (const { alert, dolar, precio } of disparadas) {
+    for (const { alert, tipo, precio } of disparadas) {
+      const tipoLbl  = TIPO_LABEL[tipo] || tipo;
       const campoLbl = alert.campo === 'compra' ? 'Compra' : 'Venta';
       const dirLbl   = alert.condicion === 'baja' ? 'bajó a' : 'subió a';
       showLocalNotification(
-        `📊 Alerta Dólar ${dolar.nombre}`,
+        `📊 Alerta Dólar ${tipoLbl}`,
         `${campoLbl} ${dirLbl} ${formatPrice(precio)} (límite: ${formatPrice(alert.valor)})`
       );
-      showToast(
-        `Alerta: ${dolar.nombre} ${campoLbl} ${dirLbl} ${formatPrice(precio)}`,
-        'success', 7000
-      );
+      showToast(`Alerta: ${tipoLbl} ${campoLbl} ${dirLbl} ${formatPrice(precio)}`, 'success', 7000);
       renderAlertas();
     }
 
-    // Guardar estado ANTERIOR antes de sobreescribir para comparación de badges
+    // Guardar estado ANTERIOR antes de sobreescribir — necesario para los badges de variación
     const prev         = state.cotizaciones;
     state.cotizaciones = cotizaciones;
-    state.lastUpdate   = updatedAt;
+    state.lastUpdate   = updatedAtDate;
 
     renderCotizaciones(cotizaciones, prev);
 
-    // ── Status bar: timestamp unificado del backend ───────────────────────
-    const hora = updatedAt.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
-    const staleTxt = response.stale ? ' · datos rancios' : '';
-    setStatus('', `Actualizado a las ${hora}${staleTxt}`);
+    // Status bar: timestamp unificado del backend — un solo horario para todos los tipos
+    const hora = updatedAtDate.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+    setStatus('', `Actualizado a las ${hora}${stale ? ' · datos rancios' : ''}`);
 
   } catch (err) {
     console.error('[updateCotizaciones]', err.message);
@@ -227,8 +231,9 @@ function updatePriceHint() {
   const tipo  = document.getElementById('alert-tipo').value;
   const campo = document.getElementById('alert-campo').value;
   const hint  = document.getElementById('current-price-hint');
-  const d     = state.cotizaciones.find(c => c.casa === tipo);
-  const p     = d ? (campo === 'compra' ? d.compra : d.venta) : null;
+  // state.cotizaciones es { oficial, blue, mep, ccl }
+  const prices = state.cotizaciones[tipo];
+  const p      = prices ? prices[campo] : null;
   hint.textContent = p != null ? `actual: ${formatPrice(p)}` : '';
 }
 
@@ -254,7 +259,7 @@ async function toggleNotifications() {
     showToast('Tu navegador no soporta notificaciones', 'error'); return;
   }
   if (perm === 'denied') {
-    showToast('Notificaciones bloqueadas. Habilitarlas en la configuración del navegador.', 'warning', 6000); return;
+    showToast('Notificaciones bloqueadas. Habilitarlas en configuración del navegador.', 'warning', 6000); return;
   }
   if (perm === 'granted') {
     showToast('Notificaciones ya activadas ✓', 'info'); return;
@@ -345,16 +350,16 @@ function refreshAll() {
 }
 
 function setupAutoRefresh() {
-  // Ciclo normal cada UPDATE_INTERVAL (5 min)
+  // Ciclo periódico
   setInterval(refreshAll, CONFIG.UPDATE_INTERVAL);
 
-  // Al volver al tab: refrescar si los datos tienen > STALE_MS de antigüedad.
-  // Cubre el caso donde el browser pausó/throttleó el setInterval en background.
+  // Al volver al tab (mobile en background, cambio de pestaña):
+  // el setInterval puede haber sido pausado/throttleado por el browser.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
     const elapsed = state.lastUpdate ? Date.now() - state.lastUpdate.getTime() : Infinity;
     if (elapsed > STALE_MS) {
-      console.log(`[auto-refresh] Tab visible con datos de ${Math.round(elapsed / 1000)}s → refrescando`);
+      console.log(`[auto-refresh] Tab visible, datos de ${Math.round(elapsed / 1000)}s → refrescando`);
       refreshAll();
     }
   });

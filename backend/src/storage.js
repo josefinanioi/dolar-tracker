@@ -1,4 +1,4 @@
-const fs = require('fs');
+const fs   = require('fs');
 const path = require('path');
 
 const DATA_DIR = path.join(__dirname, '../../data');
@@ -21,18 +21,31 @@ function write(filename, data) {
 }
 
 // ── Historial ──────────────────────────────────────────────────────────────────
+//
+// Nuevo formato de snapshot: { ts, oficial: {compra, venta}, blue, mep, ccl }
+// Las entradas en formato viejo (que tienen campo .cotizaciones array) se
+// descartan automáticamente al escribir, para evitar mezclar formatos.
 
 function addSnapshot(cotizaciones) {
+  // cotizaciones = { oficial: {compra, venta}, blue, mep, ccl }
   let history = read('history.json', []);
-  history.push({ ts: Date.now(), cotizaciones });
-  // Mantener solo las últimas 24 horas (288 snapshots a 5 min)
+
+  // Descartar entradas en formato viejo (tenían { cotizaciones: [...] })
+  history = history.filter(s => !Array.isArray(s.cotizaciones));
+
+  history.push({ ts: Date.now(), ...cotizaciones });
+
+  // Mantener solo las últimas 24 horas
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
   history = history.filter(s => s.ts > cutoff);
+
   write('history.json', history);
 }
 
 function getHistory() {
-  return read('history.json', []);
+  const history = read('history.json', []);
+  // Devolver solo entradas en nuevo formato
+  return history.filter(s => !Array.isArray(s.cotizaciones));
 }
 
 // ── Suscripciones Push ─────────────────────────────────────────────────────────
@@ -43,7 +56,7 @@ function getSubscriptions() {
 
 function upsertSubscription(userId, subscription) {
   const subs = getSubscriptions();
-  const idx = subs.findIndex(s => s.userId === userId);
+  const idx  = subs.findIndex(s => s.userId === userId);
   if (idx >= 0) subs[idx].subscription = subscription;
   else subs.push({ userId, subscription });
   write('subscriptions.json', subs);
@@ -54,37 +67,48 @@ function removeSubscription(userId) {
 }
 
 // ── Alertas ────────────────────────────────────────────────────────────────────
+//
+// Migración automática: alertas guardadas con tipo 'bolsa' o 'contadoconliqui'
+// (formato viejo) se mapean a 'mep' y 'ccl' al leer.
+
+const TIPO_MIGRATION = { bolsa: 'mep', contadoconliqui: 'ccl' };
+
+function migrateAlertTipo(tipo) {
+  return TIPO_MIGRATION[tipo] ?? tipo;
+}
 
 function getAlerts() {
-  return read('alerts.json', []);
+  const list = read('alerts.json', []);
+  return list.map(a => ({ ...a, tipo: migrateAlertTipo(a.tipo) }));
 }
 
 function createAlert(data) {
-  const alerts = getAlerts();
-  const alert = {
+  const raw    = read('alerts.json', []);
+  const alert  = {
     ...data,
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    tipo:      migrateAlertTipo(data.tipo),
+    id:        `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     createdAt: new Date().toISOString(),
     triggered: false,
   };
-  alerts.push(alert);
-  write('alerts.json', alerts);
+  raw.push(alert);
+  write('alerts.json', raw);
   return alert;
 }
 
 function deleteAlert(id) {
-  write('alerts.json', getAlerts().filter(a => a.id !== id));
+  write('alerts.json', read('alerts.json', []).filter(a => a.id !== id));
 }
 
 function triggerAlert(id) {
-  const alerts = getAlerts();
+  const alerts = read('alerts.json', []);
   const a = alerts.find(a => a.id === id);
   if (a) { a.triggered = true; a.triggeredAt = new Date().toISOString(); }
   write('alerts.json', alerts);
 }
 
 function resetAlert(id) {
-  const alerts = getAlerts();
+  const alerts = read('alerts.json', []);
   const a = alerts.find(a => a.id === id);
   if (a) { a.triggered = false; delete a.triggeredAt; }
   write('alerts.json', alerts);
