@@ -67,8 +67,15 @@
     <!-- ── Historial ────────────────────────────────────────────── -->
     <section class="section">
       <div class="section-header">
-        <h2 class="section-title">Historial 24hs</h2>
+        <h2 class="section-title">Historial</h2>
         <div class="chart-controls">
+          <div class="range-btns" role="group" aria-label="Rango de historial">
+            <button class="btn-range active" data-range="24h">24h</button>
+            <button class="btn-range" data-range="7d">7d</button>
+            <button class="btn-range" data-range="30d">30d</button>
+            <button class="btn-range" data-range="3m">3m</button>
+            <button class="btn-range" data-range="custom" title="Rango personalizado">⋯</button>
+          </div>
           <select id="chart-tipo" class="select-sm" aria-label="Tipo de dólar">
             <option value="blue">Blue</option>
             <option value="oficial">Oficial</option>
@@ -81,6 +88,31 @@
           </select>
         </div>
       </div>
+
+      <!-- Date picker (solo visible con rango custom) -->
+      <div id="custom-date-range" class="custom-date-range hidden">
+        <input type="date" id="range-from" class="form-control form-control-sm">
+        <span class="range-sep">—</span>
+        <input type="date" id="range-to" class="form-control form-control-sm">
+        <button id="apply-range" class="btn-primary btn-sm">Aplicar</button>
+      </div>
+
+      <!-- Stats mín/máx/variación del rango -->
+      <div id="chart-stats" class="chart-stats hidden" aria-label="Estadísticas del rango">
+        <div class="stat-item">
+          <span class="stat-label">Mín</span>
+          <span id="stat-min" class="stat-value">—</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Máx</span>
+          <span id="stat-max" class="stat-value">—</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Variación</span>
+          <span id="stat-var" class="stat-value">—</span>
+        </div>
+      </div>
+
       <div class="chart-container" role="img" aria-label="Gráfico de historial">
         <canvas id="history-chart"></canvas>
         <div id="chart-empty" class="chart-empty hidden">
@@ -112,44 +144,144 @@
         <button id="modal-close" class="btn-icon" aria-label="Cerrar">✕</button>
       </div>
       <form id="alert-form" class="modal-body" novalidate>
-        <div class="form-group">
-          <label for="alert-tipo">Tipo de dólar</label>
-          <select id="alert-tipo" class="form-control" required>
-            <option value="blue">Dólar Blue</option>
-            <option value="oficial">Dólar Oficial</option>
-            <option value="mep">Dólar MEP</option>
-            <option value="ccl">Dólar CCL</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label for="alert-campo">Precio a monitorear</label>
-          <select id="alert-campo" class="form-control" required>
-            <option value="venta">Venta</option>
-            <option value="compra">Compra</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label for="alert-condicion">Condición</label>
-          <select id="alert-condicion" class="form-control" required>
-            <option value="baja">Alertar si baja de… (para compra)</option>
-            <option value="sube">Alertar si sube de… (para venta)</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label for="alert-valor">Valor objetivo ($)</label>
-          <div class="input-with-hint">
-            <input id="alert-valor" type="number" class="form-control"
-                   placeholder="Ej: 1050" min="1" step="0.01" required
-                   aria-describedby="current-price-hint">
-            <span id="current-price-hint" class="input-hint"></span>
+
+        <!-- Moneda y campo (comunes a todos los tipos) -->
+        <div class="form-row">
+          <div class="form-group">
+            <label for="alert-tipo">Dólar</label>
+            <select id="alert-tipo" class="form-control" required>
+              <option value="blue">Dólar Blue</option>
+              <option value="oficial">Dólar Oficial</option>
+              <option value="mep">Dólar MEP</option>
+              <option value="ccl">Dólar CCL</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="alert-campo">Precio a monitorear</label>
+            <select id="alert-campo" class="form-control" required>
+              <option value="venta">Venta</option>
+              <option value="compra">Compra</option>
+            </select>
           </div>
         </div>
+
+        <!-- Selector de tipo de alerta -->
+        <div class="form-group">
+          <label>Tipo de alerta</label>
+          <div class="alert-type-tabs" role="tablist">
+            <button type="button" class="tab-btn active" data-tipAlerta="umbral" role="tab" aria-selected="true">
+              Umbral
+            </button>
+            <button type="button" class="tab-btn" data-tipAlerta="variacion" role="tab" aria-selected="false">
+              Variación %
+            </button>
+            <button type="button" class="tab-btn" data-tipAlerta="extremo" role="tab" aria-selected="false">
+              Mín/Máx
+            </button>
+            <button type="button" class="tab-btn" data-tipAlerta="tendencia" role="tab" aria-selected="false">
+              Tendencia
+            </button>
+          </div>
+        </div>
+
+        <!-- ── Campos: Umbral ── -->
+        <div class="alert-fields" data-tipAlerta="umbral">
+          <div class="form-group">
+            <label for="alert-condicion">Condición</label>
+            <select id="alert-condicion" class="form-control" required>
+              <option value="baja">Alertar si baja de… (para compra)</option>
+              <option value="sube">Alertar si sube de… (para venta)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="alert-valor">Valor objetivo ($)</label>
+            <div class="input-with-hint">
+              <input id="alert-valor" type="number" class="form-control"
+                     placeholder="Ej: 1050" min="1" step="0.01"
+                     aria-describedby="current-price-hint">
+              <span id="current-price-hint" class="input-hint"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Campos: Variación % ── -->
+        <div class="alert-fields hidden" data-tipAlerta="variacion">
+          <p class="fields-desc">Avisá cuando el precio cambie más de X% respecto al inicio del período.</p>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="alert-condicion-var">Dirección</label>
+              <select id="alert-condicion-var" class="form-control">
+                <option value="sube">↑ Sube más de…</option>
+                <option value="baja">↓ Baja más de…</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="alert-porcentaje">Porcentaje (%)</label>
+              <input id="alert-porcentaje" type="number" class="form-control"
+                     placeholder="Ej: 2" min="0.1" max="50" step="0.1">
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="alert-periodo-var">En el período de</label>
+            <select id="alert-periodo-var" class="form-control">
+              <option value="1h">1 hora</option>
+              <option value="24h" selected>24 horas</option>
+              <option value="7d">7 días</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- ── Campos: Extremo ── -->
+        <div class="alert-fields hidden" data-tipAlerta="extremo">
+          <p class="fields-desc">Avisá cuando el precio toque el mínimo o máximo del historial acumulado.</p>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="alert-extremo">Nivel</label>
+              <select id="alert-extremo" class="form-control">
+                <option value="minimo">↓ Mínimo del período</option>
+                <option value="maximo">↑ Máximo del período</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="alert-periodo-ext">Período de referencia</label>
+              <select id="alert-periodo-ext" class="form-control">
+                <option value="7d" selected>Últimos 7 días</option>
+                <option value="30d">Últimos 30 días</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Campos: Tendencia ── -->
+        <div class="alert-fields hidden" data-tipAlerta="tendencia">
+          <p class="fields-desc">Avisá cuando el precio suba o baje de forma consecutiva en varias mediciones.</p>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="alert-tendencia">Dirección</label>
+              <select id="alert-tendencia" class="form-control">
+                <option value="subiendo">↑ Tendencia alcista</option>
+                <option value="bajando">↓ Tendencia bajista</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="alert-consecutivos">Mediciones consecutivas</label>
+              <select id="alert-consecutivos" class="form-control">
+                <option value="3" selected>3 (≈ 15 min)</option>
+                <option value="6">6 (≈ 30 min)</option>
+                <option value="12">12 (≈ 1 hora)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Repetir (común a todos) -->
         <div class="form-group">
           <label class="checkbox-label">
             <input type="checkbox" id="alert-repeating">
             <span>Repetir alerta (notificar múltiples veces)</span>
           </label>
         </div>
+
         <div class="modal-footer">
           <button type="button" id="cancel-alert" class="btn-secondary">Cancelar</button>
           <button type="submit" class="btn-primary">Crear alerta</button>

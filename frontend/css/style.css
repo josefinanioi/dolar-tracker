@@ -173,12 +173,108 @@ body {
 /* ══════════════════════════════════════════════════════════════════
    Chart
    ══════════════════════════════════════════════════════════════════ */
-.chart-controls { display: flex; gap: .4rem; }
-.chart-container { position: relative; height: 220px; margin-top: .5rem; }
+.chart-controls { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+
+/* ── Botones de rango ────────────────────────────────────────────── */
+.range-btns { display: flex; gap: 2px; }
+
+.btn-range {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--muted);
+  font-size: .72rem; font-weight: 600;
+  padding: .22rem .52rem;
+  cursor: pointer;
+  transition: background var(--t), color var(--t), border-color var(--t);
+  white-space: nowrap;
+}
+.btn-range:hover          { background: var(--bg); color: var(--text); }
+.btn-range.active         { background: var(--primary); border-color: var(--primary); color: #fff; }
+
+/* ── Date picker custom ──────────────────────────────────────────── */
+.custom-date-range {
+  display: flex; align-items: center; gap: .5rem;
+  margin-top: .6rem; flex-wrap: wrap;
+}
+.range-sep { color: var(--muted); font-size: .85rem; flex-shrink: 0; }
+.form-control-sm {
+  padding: .28rem .5rem; font-size: .82rem;
+  max-width: 140px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  -webkit-appearance: none;
+}
+.form-control-sm:focus {
+  outline: none; border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(59,130,246,.2);
+}
+
+/* ── Stats (mín/máx/variación) ───────────────────────────────────── */
+.chart-stats {
+  display: flex; gap: 1rem; flex-wrap: wrap;
+  margin-top: .6rem; padding: .5rem .75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: .78rem;
+}
+.stat-item  { display: flex; align-items: center; gap: .35rem; }
+.stat-label { color: var(--muted); font-weight: 500; }
+.stat-value { font-weight: 700; font-variant-numeric: tabular-nums; }
+.var-up      { color: var(--success); }
+.var-down    { color: var(--danger); }
+.var-neutral { color: var(--muted); }
+
+.chart-container { position: relative; height: 220px; margin-top: .6rem; }
 .chart-empty {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
   color: var(--muted); font-size: .88rem; text-align: center; padding: 1rem;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Modal: formulario de alertas
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Fila de dos columnas en el modal */
+.form-row {
+  display: grid; grid-template-columns: 1fr 1fr; gap: .65rem;
+}
+
+/* Tabs de tipo de alerta */
+.alert-type-tabs {
+  display: flex; gap: 3px; flex-wrap: wrap;
+}
+.tab-btn {
+  flex: 1 1 auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--muted);
+  font-size: .75rem; font-weight: 600;
+  padding: .32rem .5rem;
+  cursor: pointer; white-space: nowrap;
+  transition: background var(--t), color var(--t), border-color var(--t);
+}
+.tab-btn:hover  { background: var(--bg); color: var(--text); }
+.tab-btn.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+
+/* Descripción contextual en los campos de cada tipo */
+.fields-desc {
+  font-size: .78rem; color: var(--muted);
+  margin-bottom: .1rem; line-height: 1.4;
+}
+
+/* Badge de tipo en la lista de alertas */
+.alert-type-badge {
+  display: inline-block;
+  font-size: .62rem; font-weight: 700;
+  padding: .1rem .35rem; margin-right: .25rem;
+  background: rgba(139,92,246,.15); color: #a78bfa;
+  border-radius: 3px; vertical-align: middle;
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -359,9 +455,17 @@ body {
   .cotizaciones-grid { grid-template-columns: repeat(2, 1fr); }
   .chart-container { height: 180px; }
   .price-value { font-size: .9rem; }
-  /* cards más compactas en 2 columnas */
   .card { padding: .65rem; }
   .card-prices { gap: .2rem; }
+
+  /* Historial: controles en dos líneas */
+  .section-header { flex-wrap: wrap; gap: .5rem; }
+  .chart-controls  { flex-wrap: wrap; gap: .35rem; }
+  .range-btns      { flex-wrap: wrap; }
+
+  /* Modal: columnas en una sola en mobile */
+  .form-row { grid-template-columns: 1fr; }
+  .alert-type-tabs .tab-btn { font-size: .7rem; padding: .28rem .4rem; }
 }
 @media (max-width: 360px) {
   .price-value { font-size: .82rem; }

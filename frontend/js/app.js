@@ -1,16 +1,20 @@
 // ─── Dólar AR – Aplicación principal ─────────────────────────────
 
-// Estado global de la app
+// ── Estado global ────────────────────────────────────────────────
+
 const state = {
-  // cotizaciones: { oficial: {compra, venta}, blue, mep, ccl }
   cotizaciones: {},
   history:      [],
-  lastUpdate:   null,  // Date del updatedAt que devolvió el backend
+  lastUpdate:   null,
+  chartRange: {
+    key:  '24h',
+    from: null,
+    to:   null,
+    ms:   24 * 60 * 60 * 1000,
+  },
 };
 
-// ══════════════════════════════════════════════════════════════════
-// Definición de los 4 tipos de dólar
-// ══════════════════════════════════════════════════════════════════
+// ── Tipos de dólar ───────────────────────────────────────────────
 
 const TIPOS = [
   { key: 'blue',    label: 'Blue',    accent: '#f59e0b' },
@@ -19,26 +23,35 @@ const TIPOS = [
   { key: 'ccl',     label: 'CCL',     accent: '#10b981' },
 ];
 
-// ══════════════════════════════════════════════════════════════════
-// Helpers de formato
-// ══════════════════════════════════════════════════════════════════
+// ── Helpers ──────────────────────────────────────────────────────
 
 function formatPrice(n) {
   if (n == null) return '—';
   return `$${Math.round(n).toLocaleString('es-AR')}`;
 }
 
+function getRangeTimestamps() {
+  const { key, from, to } = state.chartRange;
+  const now = Date.now();
+  const DAY = 24 * 60 * 60 * 1000;
+  switch (key) {
+    case '24h':  return { from: now - DAY,      to: null, ms: DAY };
+    case '7d':   return { from: now - 7  * DAY, to: null, ms: 7  * DAY };
+    case '30d':  return { from: now - 30 * DAY, to: null, ms: 30 * DAY };
+    case '3m':   return { from: now - 90 * DAY, to: null, ms: 90 * DAY };
+    case 'custom': {
+      const f = from ?? (now - DAY);
+      const t = to   ?? now;
+      return { from: f, to: t, ms: t - f };
+    }
+    default:     return { from: now - DAY,       to: null, ms: DAY };
+  }
+}
+
 // ══════════════════════════════════════════════════════════════════
-// Renderizado — Cotizaciones
+// Render — Cotizaciones
 // ══════════════════════════════════════════════════════════════════
 
-/**
- * Renderiza las 4 tarjetas de cotizaciones.
- *
- * @param {Object} data  Formato: { oficial, blue, mep, ccl }  — cada uno { compra, venta }
- * @param {Object} prev  Idem, datos anteriores para calcular variación porcentual.
- *                       Se pasa explícitamente para no depender del state, que ya fue sobreescrito.
- */
 function renderCotizaciones(data, prev = {}) {
   const grid = document.getElementById('cotizaciones-grid');
 
@@ -80,7 +93,7 @@ function renderCotizaciones(data, prev = {}) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Renderizado — Alertas
+// Render — Alertas
 // ══════════════════════════════════════════════════════════════════
 
 function renderAlertas() {
@@ -95,18 +108,22 @@ function renderAlertas() {
   }
   emptyEl.classList.add('hidden');
 
+  const TIP_BADGE = { variacion: 'Var%', extremo: 'Ext', tendencia: 'Tend' };
+
   list.innerHTML = alerts.map(a => {
-    const tipoLbl  = TIPO_LABEL[a.tipo] || a.tipo;
-    const campoLbl = a.campo === 'compra' ? 'Compra' : 'Venta';
-    const condLbl  = a.condicion === 'baja' ? '↓ baja de' : '↑ sube a';
+    const tip       = a.tipAlerta || 'umbral';
     const statusCls = a.triggered ? 'status-triggered' : 'status-active';
     const statusLbl = a.triggered ? '✓ disparada' : '⏳ activa';
     const fecha     = new Date(a.createdAt).toLocaleDateString('es-AR');
+    const tipBadge  = TIP_BADGE[tip] || '';
 
     return `
       <div class="alert-item${a.triggered ? ' triggered' : ''}">
         <div class="alert-info">
-          <span class="alert-title">${tipoLbl} ${campoLbl} ${condLbl} $${a.valor.toLocaleString('es-AR')}</span>
+          <span class="alert-title">
+            ${tipBadge ? `<span class="alert-type-badge">${tipBadge}</span>` : ''}
+            ${alertaTitle(a)}
+          </span>
           <span class="alert-meta">${a.repeating ? 'Repetitiva · ' : ''}Creada el ${fecha}</span>
         </div>
         <div class="alert-actions">
@@ -158,37 +175,25 @@ async function updateCotizaciones() {
   setStatus('loading', 'Actualizando...');
 
   try {
-    // fetchCotizaciones() retorna: { updatedAt, oficial, blue, mep, ccl, stale? }
     const response = await fetchCotizaciones();
-
-    // Separar metadata del payload de cotizaciones
     const { updatedAt, stale, ...cotizaciones } = response;
-    // cotizaciones = { oficial: {compra,venta}, blue: {...}, mep: {...}, ccl: {...} }
-
     const updatedAtDate = updatedAt ? new Date(updatedAt) : new Date();
 
-    // Evaluar alertas con los datos nuevos (antes de sobreescribir state)
-    const disparadas = evalAlertas(cotizaciones);
-    for (const { alert, tipo, precio } of disparadas) {
-      const tipoLbl  = TIPO_LABEL[tipo] || tipo;
-      const campoLbl = alert.campo === 'compra' ? 'Compra' : 'Venta';
-      const dirLbl   = alert.condicion === 'baja' ? 'bajó a' : 'subió a';
-      showLocalNotification(
-        `📊 Alerta Dólar ${tipoLbl}`,
-        `${campoLbl} ${dirLbl} ${formatPrice(precio)} (límite: ${formatPrice(alert.valor)})`
-      );
-      showToast(`Alerta: ${tipoLbl} ${campoLbl} ${dirLbl} ${formatPrice(precio)}`, 'success', 7000);
+    // Evaluar alertas antes de sobreescribir state
+    const disparadas = evalAlertas(cotizaciones, state.history);
+    for (const { tipo, mensaje } of disparadas) {
+      const tipoLbl = TIPO_LABEL[tipo] || tipo;
+      showLocalNotification(`📊 Alerta Dólar ${tipoLbl}`, mensaje);
+      showToast(`Alerta: ${mensaje}`, 'success', 7000);
       renderAlertas();
     }
 
-    // Guardar estado ANTERIOR antes de sobreescribir — necesario para los badges de variación
     const prev         = state.cotizaciones;
     state.cotizaciones = cotizaciones;
     state.lastUpdate   = updatedAtDate;
 
     renderCotizaciones(cotizaciones, prev);
 
-    // Status bar: timestamp unificado del backend — un solo horario para todos los tipos
     const hora = updatedAtDate.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
     setStatus('', `Actualizado a las ${hora}${stale ? ' · datos rancios' : ''}`);
 
@@ -203,13 +208,52 @@ async function updateCotizaciones() {
 
 async function updateHistorial() {
   try {
-    state.history = await fetchHistorial();
+    const { from, to, ms } = getRangeTimestamps();
+    const history = await fetchHistorial(from, to);
+    state.history     = history;
+    state.chartRange.ms = ms;
+
     const tipo  = document.getElementById('chart-tipo').value;
     const campo = document.getElementById('chart-campo').value;
-    renderChart(state.history, tipo, campo);
+    renderChart(history, tipo, campo, ms);
   } catch (err) {
     console.warn('[updateHistorial]', err.message);
   }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Selector de rango del historial
+// ══════════════════════════════════════════════════════════════════
+
+function setRange(key) {
+  state.chartRange.key  = key;
+  state.chartRange.from = null;
+  state.chartRange.to   = null;
+
+  document.querySelectorAll('.btn-range').forEach(b => {
+    b.classList.toggle('active', b.dataset.range === key);
+  });
+
+  const customEl = document.getElementById('custom-date-range');
+  customEl.classList.toggle('hidden', key !== 'custom');
+
+  if (key !== 'custom') updateHistorial();
+}
+
+function applyCustomRange() {
+  const fromInput = document.getElementById('range-from').value;
+  const toInput   = document.getElementById('range-to').value;
+  if (!fromInput || !toInput) {
+    showToast('Seleccioná fechas de inicio y fin', 'warning'); return;
+  }
+  const from = new Date(fromInput).getTime();
+  const to   = new Date(toInput + 'T23:59:59').getTime();
+  if (from >= to) {
+    showToast('La fecha de inicio debe ser anterior a la de fin', 'warning'); return;
+  }
+  state.chartRange.from = from;
+  state.chartRange.to   = to;
+  updateHistorial();
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -218,6 +262,7 @@ async function updateHistorial() {
 
 function openModal() {
   document.getElementById('modal-overlay').classList.remove('hidden');
+  switchAlertType('umbral');
   updatePriceHint();
   document.getElementById('alert-valor').focus();
 }
@@ -227,11 +272,19 @@ function closeModal() {
   document.getElementById('alert-form').reset();
 }
 
+function switchAlertType(tipAlerta) {
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.tipAlerta === tipAlerta);
+  });
+  document.querySelectorAll('.alert-fields').forEach(el => {
+    el.classList.toggle('hidden', el.dataset.tipAlerta !== tipAlerta);
+  });
+}
+
 function updatePriceHint() {
   const tipo  = document.getElementById('alert-tipo').value;
   const campo = document.getElementById('alert-campo').value;
   const hint  = document.getElementById('current-price-hint');
-  // state.cotizaciones es { oficial, blue, mep, ccl }
   const prices = state.cotizaciones[tipo];
   const p      = prices ? prices[campo] : null;
   hint.textContent = p != null ? `actual: ${formatPrice(p)}` : '';
@@ -247,6 +300,46 @@ function handleResetAlerta(id) {
   resetAlerta(id);
   renderAlertas();
   showToast('Alerta reactivada', 'info');
+}
+
+function handleAlertSubmit(e) {
+  e.preventDefault();
+
+  const tipo      = document.getElementById('alert-tipo').value;
+  const campo     = document.getElementById('alert-campo').value;
+  const repeating = document.getElementById('alert-repeating').checked;
+  const tipAlerta = document.querySelector('.tab-btn.active')?.dataset.tipAlerta || 'umbral';
+
+  let params = { tipo, campo, tipAlerta, repeating };
+
+  if (tipAlerta === 'umbral') {
+    const condicion = document.getElementById('alert-condicion').value;
+    const valor     = parseFloat(document.getElementById('alert-valor').value);
+    if (!valor || valor <= 0) { showToast('Ingresá un valor válido', 'error'); return; }
+    params = { ...params, condicion, valor };
+  }
+  else if (tipAlerta === 'variacion') {
+    const condicion  = document.getElementById('alert-condicion-var').value;
+    const porcentaje = parseFloat(document.getElementById('alert-porcentaje').value);
+    const periodo    = document.getElementById('alert-periodo-var').value;
+    if (!porcentaje || porcentaje <= 0) { showToast('Ingresá un porcentaje válido', 'error'); return; }
+    params = { ...params, condicion, porcentaje, periodo };
+  }
+  else if (tipAlerta === 'extremo') {
+    const extremo = document.getElementById('alert-extremo').value;
+    const periodo = document.getElementById('alert-periodo-ext').value;
+    params = { ...params, extremo, periodo };
+  }
+  else if (tipAlerta === 'tendencia') {
+    const tendencia    = document.getElementById('alert-tendencia').value;
+    const consecutivos = parseInt(document.getElementById('alert-consecutivos').value) || 3;
+    params = { ...params, tendencia, consecutivos };
+  }
+
+  createAlerta(params);
+  closeModal();
+  renderAlertas();
+  showToast('Alerta creada ✓', 'success');
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -283,9 +376,9 @@ function toggleTheme() {
   document.body.classList.toggle('dark',  !isDark);
   document.body.classList.toggle('light',  isDark);
   localStorage.setItem('dolar-ar-theme', isDark ? 'light' : 'dark');
-  const tipo  = document.getElementById('chart-tipo').value;
-  const campo = document.getElementById('chart-campo').value;
-  renderChart(state.history, tipo, campo);
+  const { ms } = getRangeTimestamps();
+  renderChart(state.history, document.getElementById('chart-tipo').value,
+              document.getElementById('chart-campo').value, ms);
 }
 
 function loadTheme() {
@@ -313,29 +406,28 @@ function setupListeners() {
   document.getElementById('alert-tipo').addEventListener('change', updatePriceHint);
   document.getElementById('alert-campo').addEventListener('change', updatePriceHint);
 
-  document.getElementById('alert-form').addEventListener('submit', e => {
-    e.preventDefault();
-    const tipo      = document.getElementById('alert-tipo').value;
-    const campo     = document.getElementById('alert-campo').value;
-    const condicion = document.getElementById('alert-condicion').value;
-    const valor     = parseFloat(document.getElementById('alert-valor').value);
-    const repeating = document.getElementById('alert-repeating').checked;
-
-    if (!valor || valor <= 0) {
-      showToast('Ingresá un valor válido', 'error'); return;
-    }
-    createAlerta({ tipo, campo, condicion, valor, repeating });
-    closeModal();
-    renderAlertas();
-    showToast('Alerta creada ✓', 'success');
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchAlertType(btn.dataset.tipAlerta));
   });
 
-  document.getElementById('chart-tipo').addEventListener('change', () =>
-    renderChart(state.history, document.getElementById('chart-tipo').value, document.getElementById('chart-campo').value)
-  );
-  document.getElementById('chart-campo').addEventListener('change', () =>
-    renderChart(state.history, document.getElementById('chart-tipo').value, document.getElementById('chart-campo').value)
-  );
+  document.getElementById('alert-form').addEventListener('submit', handleAlertSubmit);
+
+  document.getElementById('chart-tipo').addEventListener('change', () => {
+    const { ms } = getRangeTimestamps();
+    renderChart(state.history, document.getElementById('chart-tipo').value,
+                document.getElementById('chart-campo').value, ms);
+  });
+  document.getElementById('chart-campo').addEventListener('change', () => {
+    const { ms } = getRangeTimestamps();
+    renderChart(state.history, document.getElementById('chart-tipo').value,
+                document.getElementById('chart-campo').value, ms);
+  });
+
+  document.querySelectorAll('.btn-range').forEach(btn => {
+    btn.addEventListener('click', () => setRange(btn.dataset.range));
+  });
+
+  document.getElementById('apply-range').addEventListener('click', applyCustomRange);
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -350,11 +442,8 @@ function refreshAll() {
 }
 
 function setupAutoRefresh() {
-  // Ciclo periódico
   setInterval(refreshAll, CONFIG.UPDATE_INTERVAL);
 
-  // Al volver al tab (mobile en background, cambio de pestaña):
-  // el setInterval puede haber sido pausado/throttleado por el browser.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
     const elapsed = state.lastUpdate ? Date.now() - state.lastUpdate.getTime() : Infinity;
@@ -364,7 +453,6 @@ function setupAutoRefresh() {
     }
   });
 
-  // Edge case desktop: foco de ventana
   window.addEventListener('focus', () => {
     const elapsed = state.lastUpdate ? Date.now() - state.lastUpdate.getTime() : Infinity;
     if (elapsed > STALE_MS) refreshAll();

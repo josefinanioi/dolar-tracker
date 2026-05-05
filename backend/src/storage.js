@@ -1,7 +1,8 @@
 const fs   = require('fs');
 const path = require('path');
 
-const DATA_DIR = path.join(__dirname, '../../data');
+const DATA_DIR        = path.join(__dirname, '../../data');
+const HISTORY_MAX_AGE = 90 * 24 * 60 * 60 * 1000; // 90 días
 
 function ensureDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -22,30 +23,69 @@ function write(filename, data) {
 
 // ── Historial ──────────────────────────────────────────────────────────────────
 //
-// Nuevo formato de snapshot: { ts, oficial: {compra, venta}, blue, mep, ccl }
-// Las entradas en formato viejo (que tienen campo .cotizaciones array) se
-// descartan automáticamente al escribir, para evitar mezclar formatos.
+// Snapshot: { ts: number, oficial: {compra, venta}, blue, mep, ccl }
+// Retención: 90 días. Granularidad: cada 5 min (288 puntos/día, ~26k máx).
+
+/**
+ * Reduce N snapshots a maxPoints promediando buckets consecutivos.
+ * Preserva el timestamp del punto central de cada bucket.
+ */
+function downsample(snapshots, maxPoints = 250) {
+  if (snapshots.length <= maxPoints) return snapshots;
+  const factor = Math.ceil(snapshots.length / maxPoints);
+  const result = [];
+  const TIPOS  = ['oficial', 'blue', 'mep', 'ccl'];
+
+  for (let i = 0; i < snapshots.length; i += factor) {
+    const bucket = snapshots.slice(i, i + factor);
+    const ts     = bucket[Math.floor(bucket.length / 2)].ts;
+    const point  = { ts };
+
+    for (const tipo of TIPOS) {
+      const vals = bucket.map(s => s[tipo]).filter(Boolean);
+      if (vals.length) {
+        point[tipo] = {
+          compra: Math.round(vals.reduce((a, v) => a + (v.compra ?? 0), 0) / vals.length * 100) / 100,
+          venta:  Math.round(vals.reduce((a, v) => a + (v.venta  ?? 0), 0) / vals.length * 100) / 100,
+        };
+      }
+    }
+    result.push(point);
+  }
+  return result;
+}
 
 function addSnapshot(cotizaciones) {
-  // cotizaciones = { oficial: {compra, venta}, blue, mep, ccl }
   let history = read('history.json', []);
-
   // Descartar entradas en formato viejo (tenían { cotizaciones: [...] })
   history = history.filter(s => !Array.isArray(s.cotizaciones));
-
   history.push({ ts: Date.now(), ...cotizaciones });
-
-  // Mantener solo las últimas 24 horas
-  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  const cutoff = Date.now() - HISTORY_MAX_AGE;
   history = history.filter(s => s.ts > cutoff);
-
   write('history.json', history);
 }
 
+/** Retorna todo el historial sin filtrar — para evaluación interna de alertas. */
+function getAllHistory() {
+  return read('history.json', []).filter(s => !Array.isArray(s.cotizaciones));
+}
+
+/**
+ * Retorna historial filtrado por rango de timestamps y downsampled.
+ * @param {number|null} from  Timestamp ms (inclusive). null = sin límite inferior.
+ * @param {number|null} to    Timestamp ms (inclusive). null = ahora.
+ * @param {number}      max   Máximo de puntos a retornar (default 250).
+ */
+function getHistoryRange(from = null, to = null, max = 250) {
+  let history = getAllHistory();
+  if (from) history = history.filter(s => s.ts >= from);
+  if (to)   history = history.filter(s => s.ts <= to);
+  return downsample(history, max);
+}
+
+/** Backward-compat: últimas 24 h (para el frontend cuando no pasa rango). */
 function getHistory() {
-  const history = read('history.json', []);
-  // Devolver solo entradas en nuevo formato
-  return history.filter(s => !Array.isArray(s.cotizaciones));
+  return getHistoryRange(Date.now() - 24 * 60 * 60 * 1000, null, 250);
 }
 
 // ── Suscripciones Push ─────────────────────────────────────────────────────────
@@ -68,8 +108,8 @@ function removeSubscription(userId) {
 
 // ── Alertas ────────────────────────────────────────────────────────────────────
 //
-// Migración automática: alertas guardadas con tipo 'bolsa' o 'contadoconliqui'
-// (formato viejo) se mapean a 'mep' y 'ccl' al leer.
+// Tipos soportados: umbral | variacion | extremo | tendencia
+// Migración automática de claves viejas: bolsa → mep, contadoconliqui → ccl
 
 const TIPO_MIGRATION = { bolsa: 'mep', contadoconliqui: 'ccl' };
 
@@ -83,8 +123,8 @@ function getAlerts() {
 }
 
 function createAlert(data) {
-  const raw    = read('alerts.json', []);
-  const alert  = {
+  const raw   = read('alerts.json', []);
+  const alert = {
     ...data,
     tipo:      migrateAlertTipo(data.tipo),
     id:        `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -115,7 +155,8 @@ function resetAlert(id) {
 }
 
 module.exports = {
-  addSnapshot, getHistory,
+  addSnapshot,
+  getAllHistory, getHistory, getHistoryRange,
   getSubscriptions, upsertSubscription, removeSubscription,
   getAlerts, createAlert, deleteAlert, triggerAlert, resetAlert,
 };
