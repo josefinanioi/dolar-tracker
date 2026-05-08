@@ -133,17 +133,23 @@ function renderChart(history, tipo, campo, rangeMs = 24 * 60 * 60 * 1000) {
     },
   };
 
-  if (chartInst) {
-    chartInst.data = cfg.data;
-    chartInst.options.scales.x.grid.color         = grid;
-    chartInst.options.scales.x.ticks.color        = tick;
-    chartInst.options.scales.x.ticks.maxTicksLimit = maxTicks;
-    chartInst.options.scales.y.grid.color         = grid;
-    chartInst.options.scales.y.ticks.color        = tick;
-    chartInst.options.plugins.tooltip.callbacks   = tooltipCallbacks;
-    chartInst.update('active');
-  } else {
-    chartInst = new Chart(canvas, cfg);
+  try {
+    if (chartInst) {
+      chartInst.data = cfg.data;
+      chartInst.options.scales.x.grid.color          = grid;
+      chartInst.options.scales.x.ticks.color         = tick;
+      chartInst.options.scales.x.ticks.maxTicksLimit = maxTicks;
+      chartInst.options.scales.y.grid.color          = grid;
+      chartInst.options.scales.y.ticks.color         = tick;
+      chartInst.options.plugins.tooltip.callbacks    = tooltipCallbacks;
+      chartInst.update('active');
+    } else {
+      chartInst = new Chart(canvas, cfg);
+    }
+  } catch (err) {
+    console.error('[chart] ❌ ERROR al renderizar Chart.js:', err);
+    // Intentar destruir instancia rota para no bloquear futuros renders
+    try { if (chartInst) { chartInst.destroy(); chartInst = null; } } catch {}
   }
 }
 

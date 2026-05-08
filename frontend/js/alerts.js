@@ -83,7 +83,8 @@ function resetAlerta(id) {
 // ── Título de alerta para la UI ────────────────────────────────────
 
 function alertaTitle(a) {
-  const tipoLbl  = TIPO_LABEL[a.tipo]  || a.tipo;
+  if (!a || typeof a !== 'object') return '(alerta inválida)';
+  const tipoLbl  = TIPO_LABEL[a.tipo]  || a.tipo  || '?';
   const campoLbl = a.campo === 'compra' ? 'Compra' : 'Venta';
   const tip      = a.tipAlerta || 'umbral';
 
@@ -116,9 +117,15 @@ function alertaTitle(a) {
 // @returns {Array} [{ alert, tipo, precio, mensaje }]
 
 function evalAlertas(cotizaciones, history = []) {
+  if (!cotizaciones || typeof cotizaciones !== 'object') {
+    console.warn('[evalAlertas] cotizaciones inválidas, omitiendo evaluación');
+    return [];
+  }
+
   const triggered = [];
 
   for (const alert of getAlertas()) {
+    try {
     if (alert.triggered && !alert.repeating) continue;
 
     const prices = cotizaciones[alert.tipo];
@@ -205,6 +212,9 @@ function evalAlertas(cotizaciones, history = []) {
     if (fired) {
       triggerAlerta(alert.id);
       triggered.push({ alert, tipo: alert.tipo, precio: precioActual, mensaje });
+    }
+    } catch (err) {
+      console.error('[evalAlertas] error evaluando alerta', alert?.id, err);
     }
   }
 

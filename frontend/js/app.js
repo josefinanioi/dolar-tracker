@@ -99,7 +99,14 @@ function renderCotizaciones(data, prev = {}) {
 function renderAlertas() {
   const list    = document.getElementById('alerts-list');
   const emptyEl = document.getElementById('alerts-empty');
-  const alerts  = getAlertas();
+
+  let alerts = [];
+  try {
+    alerts = getAlertas();
+  } catch (err) {
+    console.error('[app] ❌ getAlertas:', err);
+    alerts = [];
+  }
 
   if (!alerts.length) {
     list.innerHTML = '';
@@ -111,29 +118,41 @@ function renderAlertas() {
   const TIP_BADGE = { variacion: 'Var%', extremo: 'Ext', tendencia: 'Tend' };
 
   list.innerHTML = alerts.map(a => {
-    const tip       = a.tipAlerta || 'umbral';
-    const statusCls = a.triggered ? 'status-triggered' : 'status-active';
-    const statusLbl = a.triggered ? '✓ disparada' : '⏳ activa';
-    const fecha     = new Date(a.createdAt).toLocaleDateString('es-AR');
-    const tipBadge  = TIP_BADGE[tip] || '';
+    try {
+      const tip       = a.tipAlerta || 'umbral';
+      const statusCls = a.triggered ? 'status-triggered' : 'status-active';
+      const statusLbl = a.triggered ? '✓ disparada' : '⏳ activa';
+      const tipBadge  = TIP_BADGE[tip] || '';
 
-    return `
-      <div class="alert-item${a.triggered ? ' triggered' : ''}">
-        <div class="alert-info">
-          <span class="alert-title">
-            ${tipBadge ? `<span class="alert-type-badge">${tipBadge}</span>` : ''}
-            ${alertaTitle(a)}
-          </span>
-          <span class="alert-meta">${a.repeating ? 'Repetitiva · ' : ''}Creada el ${fecha}</span>
-        </div>
-        <div class="alert-actions">
-          <span class="alert-status ${statusCls}">${statusLbl}</span>
-          ${a.triggered
-            ? `<button class="btn-icon btn-sm" title="Reactivar" onclick="handleResetAlerta('${a.id}')">↺</button>`
-            : ''}
-          <button class="btn-danger" title="Eliminar" onclick="handleDeleteAlerta('${a.id}')">🗑</button>
-        </div>
-      </div>`;
+      let fecha = '—';
+      try { fecha = new Date(a.createdAt).toLocaleDateString('es-AR'); } catch {}
+
+      let titulo = '—';
+      try { titulo = alertaTitle(a); } catch (terr) {
+        console.warn('[renderAlertas] alertaTitle error para alerta', a?.id, terr);
+      }
+
+      return `
+        <div class="alert-item${a.triggered ? ' triggered' : ''}">
+          <div class="alert-info">
+            <span class="alert-title">
+              ${tipBadge ? `<span class="alert-type-badge">${tipBadge}</span>` : ''}
+              ${titulo}
+            </span>
+            <span class="alert-meta">${a.repeating ? 'Repetitiva · ' : ''}Creada el ${fecha}</span>
+          </div>
+          <div class="alert-actions">
+            <span class="alert-status ${statusCls}">${statusLbl}</span>
+            ${a.triggered
+              ? `<button class="btn-icon btn-sm" title="Reactivar" onclick="handleResetAlerta('${a.id}')">↺</button>`
+              : ''}
+            <button class="btn-danger" title="Eliminar" onclick="handleDeleteAlerta('${a.id}')">🗑</button>
+          </div>
+        </div>`;
+    } catch (err) {
+      console.error('[renderAlertas] error renderizando alerta', a?.id, err);
+      return ''; // omitir alerta malformada
+    }
   }).join('');
 }
 
@@ -171,53 +190,88 @@ function showToast(msg, type = 'info', ms = 3500) {
 
 async function updateCotizaciones() {
   const btn = document.getElementById('refresh-btn');
-  btn.classList.add('spinning');
+  btn?.classList.add('spinning');
   setStatus('loading', 'Actualizando...');
 
+  // ── 1. Fetch — único punto de falla crítica ───────────────────
+  let cotizaciones, updatedAtDate, stale;
   try {
     const response = await fetchCotizaciones();
-    const { updatedAt, stale, ...cotizaciones } = response;
-    const updatedAtDate = updatedAt ? new Date(updatedAt) : new Date();
+    ({ stale, ...cotizaciones } = response);
+    const { updatedAt } = response;
+    delete cotizaciones.updatedAt;
+    updatedAtDate = updatedAt ? new Date(updatedAt) : new Date();
+    console.log('[app] ✅ cotizaciones OK:', Object.keys(cotizaciones).join(', '));
+  } catch (err) {
+    console.error('[app] ❌ fetch cotizaciones:', err.message);
+    setStatus('error', 'Error al obtener cotizaciones');
+    showToast(`Error al actualizar: ${err.message}`, 'error', 6000);
+    btn?.classList.remove('spinning');
+    return; // sin datos no hay nada más que hacer
+  }
 
-    // Evaluar alertas antes de sobreescribir state
-    const disparadas = evalAlertas(cotizaciones, state.history);
-    for (const { tipo, mensaje } of disparadas) {
-      const tipoLbl = TIPO_LABEL[tipo] || tipo;
-      showLocalNotification(`📊 Alerta Dólar ${tipoLbl}`, mensaje);
-      showToast(`Alerta: ${mensaje}`, 'success', 7000);
-      renderAlertas();
-    }
+  // ── 2. Actualizar state (antes del render y alertas) ─────────
+  const prev         = state.cotizaciones;
+  state.cotizaciones = cotizaciones;
+  state.lastUpdate   = updatedAtDate;
 
-    const prev         = state.cotizaciones;
-    state.cotizaciones = cotizaciones;
-    state.lastUpdate   = updatedAtDate;
-
+  // ── 3. Render cotizaciones — aislado ─────────────────────────
+  try {
     renderCotizaciones(cotizaciones, prev);
-
     const hora = updatedAtDate.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
     setStatus('', `Actualizado a las ${hora}${stale ? ' · datos rancios' : ''}`);
-
+    console.log('[app] ✅ render cotizaciones OK');
   } catch (err) {
-    console.error('[updateCotizaciones]', err.message);
-    setStatus('error', 'Error al obtener cotizaciones');
-    showToast(`Error: ${err.message}`, 'error', 6000);
-  } finally {
-    btn.classList.remove('spinning');
+    console.error('[app] ❌ ERROR EN RENDER:', err);
+    setStatus('error', 'Error al mostrar cotizaciones');
   }
+
+  // ── 4. Evaluar alertas — aislado, nunca rompe el render ──────
+  try {
+    const disparadas = evalAlertas(cotizaciones, state.history);
+    for (const { tipo, mensaje } of disparadas) {
+      try {
+        showLocalNotification(`📊 Alerta Dólar ${TIPO_LABEL[tipo] || tipo}`, mensaje);
+        showToast(`Alerta: ${mensaje}`, 'success', 7000);
+      } catch { /* error de notificación — no crítico */ }
+    }
+    if (disparadas.length) renderAlertas();
+    console.log(`[app] ✅ alertas OK (${disparadas.length} disparadas)`);
+  } catch (err) {
+    console.error('[app] ❌ ERROR EN ALERTAS:', err);
+    // no hacer nada con la UI — las cotizaciones ya se muestran
+  }
+
+  btn?.classList.remove('spinning');
 }
 
 async function updateHistorial() {
-  try {
-    const { from, to, ms } = getRangeTimestamps();
-    const history = await fetchHistorial(from, to);
-    state.history     = history;
-    state.chartRange.ms = ms;
+  console.log('[app] 📊 updateHistorial start, rango:', state.chartRange.key);
 
+  // ── 1. Fetch historial ───────────────────────────────────────
+  let history = [];
+  let ms = state.chartRange.ms;
+  try {
+    const range = getRangeTimestamps();
+    ms = range.ms;
+    console.log('[app] 📊 fetching historial from:', range.from, 'to:', range.to);
+    history = await fetchHistorial(range.from, range.to);
+    state.history       = history;
+    state.chartRange.ms = ms;
+    console.log(`[app] ✅ historial OK: ${history.length} snapshots`);
+  } catch (err) {
+    console.error('[app] ❌ fetch historial:', err.message);
+    return;
+  }
+
+  // ── 2. Render chart — aislado del fetch ───────────────────────
+  try {
     const tipo  = document.getElementById('chart-tipo').value;
     const campo = document.getElementById('chart-campo').value;
     renderChart(history, tipo, campo, ms);
+    console.log('[app] ✅ renderChart OK');
   } catch (err) {
-    console.warn('[updateHistorial]', err.message);
+    console.error('[app] ❌ ERROR EN CHART:', err);
   }
 }
 
@@ -464,20 +518,36 @@ function setupAutoRefresh() {
 // ══════════════════════════════════════════════════════════════════
 
 async function init() {
+  console.log('[app] 🚀 init start');
+
   loadTheme();
-  setupListeners();
-  await initServiceWorker();
 
-  if (getNotifPermission() === 'granted') {
-    document.getElementById('notif-btn').classList.add('active');
-    subscribePushNotifications(getUserId());
-  }
+  try { setupListeners(); }
+  catch (err) { console.error('[app] ❌ setupListeners:', err); }
 
+  try { await initServiceWorker(); }
+  catch (err) { console.warn('[app] ⚠️ initServiceWorker:', err.message); }
+
+  try {
+    if (getNotifPermission() === 'granted') {
+      document.getElementById('notif-btn').classList.add('active');
+      subscribePushNotifications(getUserId());
+    }
+  } catch (err) { console.warn('[app] ⚠️ notif init:', err.message); }
+
+  // Cotizaciones es el núcleo — si falla, lo reporta y sigue (no lanza)
   await updateCotizaciones();
-  await updateHistorial();
-  renderAlertas();
+
+  try { await updateHistorial(); }
+  catch (err) { console.error('[app] ❌ updateHistorial en init:', err); }
+
+  try {
+    renderAlertas();
+    console.log('[app] ✅ renderAlertas inicial OK');
+  } catch (err) { console.error('[app] ❌ renderAlertas en init:', err); }
 
   setupAutoRefresh();
+  console.log('[app] ✅ init complete');
 }
 
 document.readyState === 'loading'
