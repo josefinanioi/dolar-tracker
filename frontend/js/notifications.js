@@ -5,8 +5,10 @@ let swReg = null;
 async function initServiceWorker() {
   if (!('serviceWorker' in navigator)) return null;
   try {
-    swReg = await navigator.serviceWorker.register('/sw.js');
-    console.log('✅ Service Worker registrado');
+    swReg = await navigator.serviceWorker.register('/sw.js', {
+      updateViaCache: 'none', // nunca usar HTTP cache para sw.js — siempre buscar versión nueva
+    });
+    console.log('✅ Service Worker registrado:', swReg.scope);
     return swReg;
   } catch (err) {
     console.error('Error registrando SW:', err);
