@@ -79,16 +79,6 @@ body {
   width: 100%;
   min-height: 100%;             /* relativo al html { height:100% } = viewport height */
   line-height: 1.5;
-  /*
-   * padding-top: env(safe-area-inset-top) — ÚNICA FUENTE de safe-area en el layout.
-   *
-   * Empuja TODO el contenido del body (incluido el header) por debajo del notch.
-   * Con viewport-fit=cover el viewport empieza en y=0 (detrás del notch).
-   * Este padding es la única compensación — no hay hacks en el header ni pseudo-elementos.
-   *
-   * En dispositivos sin notch env() devuelve 0 — sin efecto colateral.
-   */
-  padding-top: env(safe-area-inset-top);
   transition: background var(--t), color var(--t);
 }
 
@@ -114,7 +104,18 @@ body {
   top: 0;
   z-index: 100;
   display: flex; align-items: center; justify-content: space-between;
-  padding: .75rem 1.25rem;
+  /*
+   * padding-top: env(safe-area-inset-top) — compensación del notch/Dynamic Island.
+   *
+   * Con viewport-fit=cover el contenido empieza en y=0 (detrás del notch).
+   * Sumar env() al padding-top del header empuja el contenido visual del header
+   * (logo, campanita) por debajo del notch, sin mover el resto del layout.
+   *
+   * top: 0 (NO top: env()): el sticky funciona respecto al viewport desde y=0.
+   * El env() solo afecta al padding interno — no al punto de adhesión sticky.
+   * En dispositivos sin notch env() = 0 → sin efecto colateral.
+   */
+  padding: calc(env(safe-area-inset-top) + .75rem) 1.25rem .75rem;
   width: 100%;
   background: var(--bg-card);
   border-bottom: 1px solid var(--border);

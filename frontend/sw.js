@@ -4,7 +4,7 @@
 //   CDN externos   → cache-first    (Chart.js, cambia solo por versión en URL)
 //   Assets propios → network-first  (JS/CSS/HTML siempre frescos; cache = offline fallback)
 
-const CACHE_NAME = 'dolar-ar-v9';
+const CACHE_NAME = 'dolar-ar-v10';
 
 // Shell mínimo para funcionar offline
 const STATIC_SHELL = [
