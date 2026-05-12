@@ -119,10 +119,17 @@ function renderAlertas() {
 
   list.innerHTML = alerts.map(a => {
     try {
-      const tip       = a.tipAlerta || 'umbral';
-      const statusCls = a.triggered ? 'status-triggered' : 'status-active';
-      const statusLbl = a.triggered ? '✓ disparada' : '⏳ activa';
-      const tipBadge  = TIP_BADGE[tip] || '';
+      const tip      = a.tipAlerta || 'umbral';
+      const state    = a.state || 'armed'; // compatibilidad con alertas viejas sin migrar
+      const tipBadge = TIP_BADGE[tip] || '';
+
+      // Estado visual basado en state machine
+      const statusCls = state === 'armed' ? 'status-active' : 'status-triggered';
+      const statusLbl = state === 'armed'
+        ? '⏳ activa'
+        : state === 'completed'
+          ? '✓ completada'
+          : '✓ disparada';
 
       let fecha = '—';
       try { fecha = new Date(a.createdAt).toLocaleDateString('es-AR'); } catch {}
@@ -132,8 +139,10 @@ function renderAlertas() {
         console.warn('[renderAlertas] alertaTitle error para alerta', a?.id, terr);
       }
 
+      const isActive = state !== 'armed'; // triggered o completed → mostrar botón reset
+
       return `
-        <div class="alert-item${a.triggered ? ' triggered' : ''}">
+        <div class="alert-item${isActive ? ' triggered' : ''}">
           <div class="alert-info">
             <span class="alert-title">
               ${tipBadge ? `<span class="alert-type-badge">${tipBadge}</span>` : ''}
@@ -143,7 +152,7 @@ function renderAlertas() {
           </div>
           <div class="alert-actions">
             <span class="alert-status ${statusCls}">${statusLbl}</span>
-            ${a.triggered
+            ${isActive
               ? `<button class="btn-icon btn-sm" title="Reactivar" onclick="handleResetAlerta('${a.id}')">↺</button>`
               : ''}
             <button class="btn-icon btn-sm" title="Editar" onclick="handleEditAlerta('${a.id}')">✎</button>
@@ -676,13 +685,15 @@ async function init() {
   console.log('[app] 🚀 init start');
   console.count('[app] init llamado'); // detecta si init() corre más de una vez
 
-  // Migrar alertas viejas que puedan tener valores numéricos como strings.
-  // getAlertas() ya normaliza en cada lectura, pero hacemos un save explícito
-  // para que la versión persistida también quede corregida.
+  // Migrar alertas al formato state machine (triggered boolean → state string)
+  // y normalizar campos numéricos que puedan haberse guardado como strings.
+  // getAlertas() ya hace la migración en cada lectura; este save la persiste.
   try {
-    const alertasActuales = getAlertas(); // lee + normaliza
-    localStorage.setItem('dolar-ar-alerts', JSON.stringify(alertasActuales));
-    console.log('[app] migración numérica de alertas OK:', alertasActuales.length, 'alertas');
+    const alertasMigradas = getAlertas(); // lee + migra + normaliza
+    localStorage.setItem('dolar-ar-alerts', JSON.stringify(alertasMigradas));
+    localStorage.removeItem('dolar-ar-last-prices'); // clave vieja — ya no se usa
+    console.log('[app] migración de alertas OK:', alertasMigradas.length,
+      'alertas →', alertasMigradas.map(a => `${a.id.slice(-6)}[${a.state}]`).join(', '));
   } catch {}
 
   loadTheme();
