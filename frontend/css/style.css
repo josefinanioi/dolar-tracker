@@ -101,21 +101,21 @@ body {
    * una capa de compositing separada y desalinea el hit-testing de touch events.
    */
   position: sticky;
-  top: 0;
+  /*
+   * top: env(safe-area-inset-top) — mueve el CONTENEDOR ENTERO del header
+   * por debajo del notch/Dynamic Island.
+   *
+   * Con viewport-fit=cover + status-bar-style:black, el status bar tiene fondo
+   * negro opaco que cubre y=0..notch. El header pega en el borde INFERIOR del
+   * notch → el contenedor, su fondo y sus botones quedan todos fuera de la zona
+   * interceptada por iOS. Sin padding-top extra, sin doble compensación.
+   *
+   * En dispositivos sin notch env() = 0 → top: 0, comportamiento normal.
+   */
+  top: env(safe-area-inset-top);
   z-index: 100;
   display: flex; align-items: center; justify-content: space-between;
-  /*
-   * padding-top: env(safe-area-inset-top) — compensación del notch/Dynamic Island.
-   *
-   * Con viewport-fit=cover el contenido empieza en y=0 (detrás del notch).
-   * Sumar env() al padding-top del header empuja el contenido visual del header
-   * (logo, campanita) por debajo del notch, sin mover el resto del layout.
-   *
-   * top: 0 (NO top: env()): el sticky funciona respecto al viewport desde y=0.
-   * El env() solo afecta al padding interno — no al punto de adhesión sticky.
-   * En dispositivos sin notch env() = 0 → sin efecto colateral.
-   */
-  padding: calc(env(safe-area-inset-top) + .75rem) 1.25rem .75rem;
+  padding: .75rem 1.25rem;
   width: 100%;
   background: var(--bg-card);
   border-bottom: 1px solid var(--border);
