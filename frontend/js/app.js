@@ -528,7 +528,10 @@ function handleAlertSubmit(e) {
     renderAlertas();
     showToast('Alerta actualizada ✓', 'success');
   } else {
-    createAlerta(params);
+    // Pasamos las cotizaciones actuales para calcular el estado inicial correcto.
+    // Si el precio ya está en zona de disparo, la alerta nace como "triggered"
+    // y espera a que el precio vuelva a zona segura antes de poder dispararse.
+    createAlerta(params, state.cotizaciones);
     closeModal();
     renderAlertas();
     showToast('Alerta creada ✓', 'success');

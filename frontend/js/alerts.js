@@ -85,13 +85,20 @@ function _saveAlertas(list) {
   localStorage.setItem(ALERTS_KEY, JSON.stringify(list));
 }
 
-function createAlerta(params) {
+// cotizaciones: objeto { oficial, blue, mep, ccl } con precios actuales.
+// Se usa para calcular el estado inicial correcto y evitar disparos inmediatos
+// cuando el precio ya está en zona de disparo en el momento de crear la alerta.
+function createAlerta(params, cotizaciones = null) {
+  const initialState = _calcularEstadoInicial(params, cotizaciones);
+  console.log(`[alerts] createAlerta — estado inicial: ${initialState}`,
+    { tipo: params.tipo, campo: params.campo, condicion: params.condicion, valor: params.valor });
+
   const alert = _migrarAlerta({
     id:        `a-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     ...params,
     tipo:      migrarTipo(params.tipo),
     tipAlerta: params.tipAlerta || 'umbral',
-    state:     'armed',   // siempre empieza armada
+    state:     initialState,
     userId:    getUserId(),
     createdAt: new Date().toISOString(),
   });
@@ -102,13 +109,63 @@ function createAlerta(params) {
   return alert;
 }
 
+// ── Estado inicial al crear ────────────────────────────────────────
+//
+// Si el precio actual ya está en zona de disparo cuando se crea la alerta,
+// la iniciamos como "triggered" para NO disparar inmediatamente.
+// Solo dispara cuando el precio cruza el umbral (zona segura → zona de disparo).
+//
+// Ejemplo:
+//   precio actual = 1410, umbral = 1415, condicion = "baja"
+//   1410 < 1415  →  ya en zona de disparo  →  initialState = "triggered"
+//   Cuando el precio suba a ≥ 1415 → auto-reset a "armed"
+//   Luego si vuelve a bajar a < 1415 → DISPARA
+
+function _calcularEstadoInicial(params, cotizaciones) {
+  // Solo aplica a alertas de umbral con cotizaciones disponibles
+  if (!cotizaciones || (params.tipAlerta || 'umbral') !== 'umbral') return 'armed';
+
+  const prices  = cotizaciones[migrarTipo(params.tipo)];
+  if (!prices) return 'armed';
+
+  const precio   = Number(prices[params.campo]);
+  const objetivo = Number(params.valor);
+  if (Number.isNaN(precio) || Number.isNaN(objetivo)) return 'armed';
+
+  // ¿El precio actual ya está en zona de disparo?
+  const yaEnZona =
+    (params.condicion === 'baja' && precio < objetivo) ||
+    (params.condicion === 'sube' && precio > objetivo);
+
+  if (yaEnZona) {
+    console.log(`[alerts] precio actual (${precio}) ya en zona de disparo (${params.condicion} ${objetivo}) → state=triggered`);
+    return 'triggered'; // esperamos que el precio salga de la zona antes de disparar
+  }
+
+  return 'armed';
+}
+
 function deleteAlerta(id) {
-  const list   = getAlertas();
-  const antes  = list.length;
-  const nueva  = list.filter(a => a.id !== id);
+  const list  = getAlertas();
+  const antes = list.length;
+  const nueva = list.filter(a => a.id !== id);
+
   _saveAlertas(nueva);
-  console.log(`[alerts] eliminada: ${id} (${antes} → ${nueva.length})`);
-  console.log('[alerts] activas restantes:', nueva.map(a => a.id));
+
+  // ── Verificación inmediata del storage ───────────────────────
+  // Lee de vuelta el localStorage para confirmar que el setItem persistió.
+  const persistido = JSON.parse(localStorage.getItem(ALERTS_KEY) || '[]');
+  console.log('[alerts] Storage después de delete:', persistido);
+  console.log(`[alerts] eliminada: ${id} | antes=${antes} filtrado=${nueva.length} storage=${persistido.length}`);
+
+  if (persistido.length !== nueva.length) {
+    console.error('[alerts] ❌ DISCREPANCIA: el storage no coincide con el array filtrado. Reintentando write...');
+    localStorage.setItem(ALERTS_KEY, JSON.stringify(nueva));
+    console.log('[alerts] segundo write:', JSON.parse(localStorage.getItem(ALERTS_KEY) || '[]').length, 'alertas');
+  }
+
+  console.log('[alerts] IDs restantes en storage:', persistido.map(a => a.id));
+
   apiDeleteAlerta(id).then(ok => {
     if (!ok) console.warn('[alerts] ⚠️ la alerta', id, 'puede seguir activa en el backend');
   }).catch(() => {});
