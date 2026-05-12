@@ -9,6 +9,15 @@ async function initServiceWorker() {
       updateViaCache: 'none', // nunca usar HTTP cache para sw.js — siempre buscar versión nueva
     });
     console.log('✅ Service Worker registrado:', swReg.scope);
+
+    // Cuando un nuevo SW toma control (skipWaiting + clients.claim), recargamos
+    // para garantizar que el HTML y assets frescos se carguen desde la red.
+    // Esto rompe el ciclo donde iOS cachea la navegación con el HTML viejo.
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      console.log('[SW] controllerchange → recargando para aplicar nuevos assets');
+      window.location.reload();
+    });
+
     return swReg;
   } catch (err) {
     console.error('Error registrando SW:', err);

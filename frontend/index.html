@@ -21,7 +21,17 @@
   <title>Dólar AR</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
-  <link rel="stylesheet" href="/css/style.css?v=12">
+  <link rel="stylesheet" href="/css/style.css?v=13">
+  <style>
+    /* ── iOS PWA notch / Dynamic Island fix — INLINE para evitar cache de archivos ──
+       .header tiene position:sticky; top:0 y NECESITA padding-top ≥ safe-area.
+       env(safe-area-inset-top) puede devolver 0 en algunos modos standalone de iOS;
+       el fallback de 44px cubre todos los modelos con notch (iPhone X → 15 Pro Max). */
+    .header { padding-top: 44px; }
+    @supports (padding: max(0px)) {
+      .header { padding-top: max(env(safe-area-inset-top), 44px); }
+    }
+  </style>
 </head>
 <body class="dark">
 
