@@ -140,8 +140,22 @@ async function apiCreateAlerta(alert) {
 }
 
 async function apiDeleteAlerta(id) {
-  if (!CONFIG.BACKEND_URL) return;
-  try {
-    await fetch(`${CONFIG.BACKEND_URL}/api/alertas/${id}`, { method: 'DELETE' });
-  } catch { /* sin backend */ }
+  if (!CONFIG.BACKEND_URL) return false;
+  const url = `${CONFIG.BACKEND_URL}/api/alertas/${id}`;
+  for (let intento = 1; intento <= 2; intento++) {
+    try {
+      const res = await fetch(url, { method: 'DELETE' });
+      if (res.ok || res.status === 404) {
+        // 404 = ya no existía en el servidor → OK igualmente
+        console.log(`[api] apiDeleteAlerta ✓ id=${id} (intento ${intento})`);
+        return true;
+      }
+      console.warn(`[api] apiDeleteAlerta HTTP ${res.status} para id=${id}`);
+    } catch (err) {
+      console.warn(`[api] apiDeleteAlerta intento ${intento} falló:`, err.message);
+    }
+    if (intento < 2) await new Promise(r => setTimeout(r, 2000));
+  }
+  console.error(`[api] apiDeleteAlerta ✗ id=${id} — la alerta puede seguir activa en el servidor`);
+  return false;
 }

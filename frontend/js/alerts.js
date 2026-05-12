@@ -62,8 +62,15 @@ function createAlerta(params) {
 }
 
 function deleteAlerta(id) {
+  const antes = getAlertas().length;
   _saveAlertas(getAlertas().filter(a => a.id !== id));
-  apiDeleteAlerta(id).catch(() => {});
+  const despues = getAlertas().length;
+  console.log(`[alerts] alerta eliminada: ${id} (localStorage: ${antes} → ${despues})`);
+  console.log('[alerts] alertas activas restantes:', getAlertas().map(a => a.id));
+  // apiDeleteAlerta reintenta 2 veces y loguea si falla
+  apiDeleteAlerta(id).then(ok => {
+    if (!ok) console.warn('[alerts] ⚠️ la alerta', id, 'puede seguir activa en el backend — las push notifications podrían continuar');
+  }).catch(() => {});
 }
 
 function triggerAlerta(id) {
@@ -122,9 +129,13 @@ function evalAlertas(cotizaciones, history = []) {
     return [];
   }
 
+  // Lee SIEMPRE desde localStorage para reflejar eliminaciones inmediatas.
+  // No usar una copia en memoria — así una alerta borrada no vuelve a dispararse.
+  const alertas = getAlertas();
+  console.log(`[evalAlertas] evaluando ${alertas.length} alerta(s) activa(s)`);
   const triggered = [];
 
-  for (const alert of getAlertas()) {
+  for (const alert of alertas) {
     try {
     if (alert.triggered && !alert.repeating) continue;
 

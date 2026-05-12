@@ -17,8 +17,8 @@ const state = {
 // ── Tipos de dólar ───────────────────────────────────────────────
 
 const TIPOS = [
-  { key: 'blue',    label: 'Blue',    accent: '#f59e0b' },
   { key: 'oficial', label: 'Oficial', accent: '#3b82f6' },
+  { key: 'blue',    label: 'Blue',    accent: '#f59e0b' },
   { key: 'mep',     label: 'MEP',     accent: '#8b5cf6' },
   { key: 'ccl',     label: 'CCL',     accent: '#10b981' },
 ];
