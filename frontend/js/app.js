@@ -185,37 +185,108 @@ function showToast(msg, type = 'info', ms = 3500) {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// Persistencia de últimas cotizaciones conocidas (cold-start cache)
+// ══════════════════════════════════════════════════════════════════
+
+const LAST_DATA_KEY  = 'dolar-ar-last-cotizaciones';
+const LAST_DATA_MAX_AGE = 4 * 60 * 60 * 1000; // 4 horas
+
+function saveLastCotizaciones(data) {
+  try {
+    localStorage.setItem(LAST_DATA_KEY, JSON.stringify({ data, savedAt: Date.now() }));
+  } catch { /* quota exceeded u otro error — no crítico */ }
+}
+
+function loadLastCotizaciones() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(LAST_DATA_KEY));
+    if (!stored?.data || !stored?.savedAt) return null;
+    if (Date.now() - stored.savedAt > LAST_DATA_MAX_AGE) return null; // demasiado viejo
+    return stored.data;
+  } catch {
+    return null;
+  }
+}
+
+// ── Configuración de reintentos ────────────────────────────────────
+// Timeouts crecientes: el 1.° es corto (servidor ya activo);
+// el 3.° es generoso para sobrevivir al cold-start de Render (~30 s).
+const RETRY_TIMEOUTS  = [20000, 35000, 60000]; // ms por intento
+const RETRY_DELAY_MS  = 5000;                   // pausa entre intentos
+const MAX_RETRIES     = RETRY_TIMEOUTS.length;
+
+// ══════════════════════════════════════════════════════════════════
 // Fetch de cotizaciones
 // ══════════════════════════════════════════════════════════════════
 
 async function updateCotizaciones() {
   const btn = document.getElementById('refresh-btn');
   btn?.classList.add('spinning');
-  setStatus('loading', 'Actualizando...');
 
-  // ── 1. Fetch — único punto de falla crítica ───────────────────
+  // ── 1. Fetch con reintentos — tolerante al cold-start de Render ──
+  //
+  // Intento 1 (20 s): el servidor ya estaba activo.
+  // Intento 2 (35 s): el servidor se está despertando.
+  // Intento 3 (60 s): cold-start lento, espera generosa.
+  // Entre intentos: 5 s de pausa + mensaje informativo en el status bar.
+
+  const STATUS_MSG = [
+    'Conectando al backend...',
+    'Despertando servidor... (puede tardar ~30 s)',
+    `Reintentando conexión (3/${MAX_RETRIES})...`,
+  ];
+
   let cotizaciones, updatedAtDate, stale;
-  try {
-    const response = await fetchCotizaciones();
-    ({ stale, ...cotizaciones } = response);
-    const { updatedAt } = response;
-    delete cotizaciones.updatedAt;
-    updatedAtDate = updatedAt ? new Date(updatedAt) : new Date();
-    console.log('[app] ✅ cotizaciones OK:', Object.keys(cotizaciones).join(', '));
-  } catch (err) {
-    console.error('[app] ❌ fetch cotizaciones:', err.message);
-    setStatus('error', 'Error al obtener cotizaciones');
-    showToast(`Error al actualizar: ${err.message}`, 'error', 6000);
-    btn?.classList.remove('spinning');
-    return; // sin datos no hay nada más que hacer
+  let lastError = null;
+
+  for (let i = 0; i < MAX_RETRIES; i++) {
+    setStatus('loading', STATUS_MSG[i]);
+    console.log(`[app] 🔄 intento ${i + 1}/${MAX_RETRIES} (timeout ${RETRY_TIMEOUTS[i] / 1000}s)`);
+
+    try {
+      const response = await fetchCotizaciones(RETRY_TIMEOUTS[i]);
+      ({ stale, ...cotizaciones } = response);
+      const { updatedAt } = response;
+      delete cotizaciones.updatedAt;
+      updatedAtDate = updatedAt ? new Date(updatedAt) : new Date();
+      console.log(`[app] ✅ cotizaciones OK (intento ${i + 1}):`, Object.keys(cotizaciones).join(', '));
+      lastError = null;
+      break; // éxito — salir del loop
+    } catch (err) {
+      lastError = err;
+      console.warn(`[app] ⚠️ intento ${i + 1} falló:`, err.message);
+      if (i < MAX_RETRIES - 1) {
+        console.log(`[app] ⏳ esperando ${RETRY_DELAY_MS / 1000}s antes del siguiente intento...`);
+        await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+      }
+    }
   }
 
-  // ── 2. Actualizar state (antes del render y alertas) ─────────
+  // ── 2. Reintentos agotados sin éxito ─────────────────────────
+  if (lastError) {
+    console.error('[app] ❌ todos los reintentos fallaron:', lastError.message);
+    const hayDatos = Object.keys(state.cotizaciones).length > 0;
+    if (hayDatos) {
+      // Tenemos datos previos (del mismo ciclo o de localStorage) — mostrarlos como rancios
+      setStatus('error', 'Sin conexión · mostrando últimos datos guardados');
+    } else {
+      setStatus('error', 'No se pudo conectar al servidor');
+      showToast(
+        `Sin respuesta tras ${MAX_RETRIES} intentos. Verificá tu conexión o intentá en unos minutos.`,
+        'error', 10000
+      );
+    }
+    btn?.classList.remove('spinning');
+    return;
+  }
+
+  // ── 3. Actualizar state ───────────────────────────────────────
   const prev         = state.cotizaciones;
   state.cotizaciones = cotizaciones;
   state.lastUpdate   = updatedAtDate;
+  saveLastCotizaciones(cotizaciones); // persiste para próximos cold-starts
 
-  // ── 3. Render cotizaciones — aislado ─────────────────────────
+  // ── 4. Render cotizaciones — aislado ─────────────────────────
   try {
     renderCotizaciones(cotizaciones, prev);
     const hora = updatedAtDate.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
@@ -226,7 +297,7 @@ async function updateCotizaciones() {
     setStatus('error', 'Error al mostrar cotizaciones');
   }
 
-  // ── 4. Evaluar alertas — aislado, nunca rompe el render ──────
+  // ── 5. Evaluar alertas — aislado, nunca rompe el render ──────
   try {
     const disparadas = evalAlertas(cotizaciones, state.history);
     for (const { tipo, mensaje } of disparadas) {
@@ -239,7 +310,6 @@ async function updateCotizaciones() {
     console.log(`[app] ✅ alertas OK (${disparadas.length} disparadas)`);
   } catch (err) {
     console.error('[app] ❌ ERROR EN ALERTAS:', err);
-    // no hacer nada con la UI — las cotizaciones ya se muestran
   }
 
   btn?.classList.remove('spinning');
@@ -535,7 +605,21 @@ async function init() {
     }
   } catch (err) { console.warn('[app] ⚠️ notif init:', err.message); }
 
-  // Cotizaciones es el núcleo — si falla, lo reporta y sigue (no lanza)
+  // ── Mostrar últimas cotizaciones guardadas ANTES del fetch ─────
+  // Así la PWA nunca muestra pantalla en blanco durante el cold-start.
+  try {
+    const cached = loadLastCotizaciones();
+    if (cached) {
+      state.cotizaciones = cached;
+      renderCotizaciones(cached, {});
+      setStatus('loading', 'Conectando al backend...');
+      console.log('[app] 💾 cotizaciones previas cargadas desde localStorage');
+    }
+  } catch (err) {
+    console.warn('[app] ⚠️ no se pudieron cargar cotizaciones guardadas:', err.message);
+  }
+
+  // Cotizaciones es el núcleo — si falla tras los retries, reporta y sigue
   await updateCotizaciones();
 
   try { await updateHistorial(); }

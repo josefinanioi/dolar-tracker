@@ -29,18 +29,23 @@ function fetchWithTimeout(url, options = {}, ms = 15000) {
 
 // ─── Cotizaciones ─────────────────────────────────────────────────
 
-async function fetchCotizaciones() {
+/**
+ * Fetch de cotizaciones con timeout configurable.
+ * @param {number} timeoutMs  Milisegundos antes de abortar (default 20 000).
+ *                            Pasá un valor mayor en reintentos tardíos.
+ */
+async function fetchCotizaciones(timeoutMs = 20000) {
   if (!CONFIG.BACKEND_URL) throw new Error('CONFIG.BACKEND_URL no está definido');
 
   const url = bust(`${CONFIG.BACKEND_URL}/api/cotizaciones`);
-  console.log('[api] fetchCotizaciones →', url);
+  console.log(`[api] fetchCotizaciones → ${url} (timeout ${timeoutMs / 1000}s)`);
 
   let res;
   try {
-    res = await fetchWithTimeout(url, NO_CACHE, 15000);
+    res = await fetchWithTimeout(url, NO_CACHE, timeoutMs);
   } catch (err) {
     const reason = err.name === 'AbortError'
-      ? 'timeout 15s (Render puede estar en cold-start)'
+      ? `timeout ${timeoutMs / 1000}s — Render puede estar en cold-start`
       : err.message;
     console.error('[api] fetchCotizaciones ✗', reason);
     throw new Error(`Sin conexión al backend: ${reason}`);
