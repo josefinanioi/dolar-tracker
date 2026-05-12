@@ -86,39 +86,34 @@ body {
    Layout
    ══════════════════════════════════════════════════════════════════ */
 .header {
-  /*
-   * position: sticky; top: 0 — el header se adhiere al borde SUPERIOR del viewport.
-   *
-   * Con body { padding-top: env(safe-area-inset-top) } el body completo empieza
-   * debajo del notch. El header, al ser el primer hijo del body, también empieza
-   * debajo del notch sin necesitar safe-area propio.
-   *
-   * top: 0 (NO top: env()): el safe-area está en el body, no en el header.
-   * Usar top: env() crearía un doble offset (body padding + header top) y
-   * desalinearía la zona táctil en iOS PWA.
-   *
-   * backdrop-filter eliminado: bug en iOS WKWebView — blur en sticky/fixed crea
-   * una capa de compositing separada y desalinea el hit-testing de touch events.
-   */
   position: sticky;
-  /*
-   * top: env(safe-area-inset-top) — mueve el CONTENEDOR ENTERO del header
-   * por debajo del notch/Dynamic Island.
-   *
-   * Con viewport-fit=cover + status-bar-style:black, el status bar tiene fondo
-   * negro opaco que cubre y=0..notch. El header pega en el borde INFERIOR del
-   * notch → el contenedor, su fondo y sus botones quedan todos fuera de la zona
-   * interceptada por iOS. Sin padding-top extra, sin doble compensación.
-   *
-   * En dispositivos sin notch env() = 0 → top: 0, comportamiento normal.
-   */
-  top: env(safe-area-inset-top);
+  top: 0;
   z-index: 100;
   display: flex; align-items: center; justify-content: space-between;
-  padding: .75rem 1.25rem;
+  /*
+   * Fallback explícito 44px: en algunos modos iOS PWA standalone,
+   * env(safe-area-inset-top) devuelve 0 o un valor incorrecto (bug de WKWebView).
+   * 44px cubre todos los modelos iPhone con notch o Dynamic Island.
+   * El @supports siguiente lo sobreescribe con max() cuando está soportado.
+   */
+  padding: 44px 1.25rem .75rem;
   width: 100%;
   background: var(--bg-card);
   border-bottom: 1px solid var(--border);
+}
+
+/*
+ * max(env(safe-area-inset-top), 44px):
+ *   - Si env() funciona y devuelve >44px (Dynamic Island ≈59px) → usa env().
+ *   - Si env() funciona y devuelve <44px (iPhone sin notch ≈20px) → usa 44px.
+ *   - Si env() devuelve 0 (bug PWA standalone) → usa 44px como fallback real.
+ * El @supports garantiza que solo aplica en browsers con soporte para max().
+ * Browsers viejos usan el fallback de 44px declarado arriba.
+ */
+@supports (padding: max(0px)) {
+  .header {
+    padding-top: max(env(safe-area-inset-top), 44px);
+  }
 }
 .header-left  { display: flex; align-items: center; gap: .5rem; }
 .header-right { display: flex; gap: .4rem; }
