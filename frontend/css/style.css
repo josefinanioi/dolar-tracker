@@ -33,23 +33,36 @@
   --shadow:   0 4px 16px rgba(0,0,0,.1);
 }
 
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  /* Todos los elementos participan del box model correcto */
+}
 
 html {
   font-size: 16px;
   -webkit-text-size-adjust: 100%;
-  overflow-x: hidden;          /* evita scroll lateral en iOS/Android */
-  touch-action: manipulation;  /* deshabilita double-tap zoom en todo el documento */
+  /* pan-y: permite scroll vertical, bloquea scroll/zoom horizontal.
+     "manipulation" era demasiado amplio y podía bloquear el scroll recovery en iOS. */
+  touch-action: pan-y;
+  overflow-x: clip; /* más fuerte que hidden en mobile: no crea scroll container */
 }
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
+  width: 100%;
   min-height: 100vh;
-  min-height: 100dvh;          /* dynamic viewport height en mobile */
+  min-height: 100dvh;              /* dynamic viewport: respeta barra del browser */
   line-height: 1.5;
   overflow-x: hidden;
+  position: relative;              /* contiene overflow horizontal en iOS */
+  -webkit-overflow-scrolling: touch; /* scroll suave en iOS legacy */
+  overscroll-behavior-y: contain;  /* evita pull-to-refresh accidental en Android */
   transition: background var(--t), color var(--t);
 }
 
@@ -60,9 +73,11 @@ body {
   position: sticky; top: 0; z-index: 100;
   display: flex; align-items: center; justify-content: space-between;
   padding: .75rem 1.25rem;
+  width: 100%;                /* no desborda cuando body tiene overflow-x:hidden */
   background: var(--bg-card);
   border-bottom: 1px solid var(--border);
   backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px); /* Safari */
 }
 .header-left  { display: flex; align-items: center; gap: .5rem; }
 .header-right { display: flex; gap: .4rem; }
@@ -72,11 +87,23 @@ body {
 .status-bar {
   display: flex; align-items: center; justify-content: space-between;
   padding: .4rem 1.25rem;
+  width: 100%;
   background: var(--bg-card);
   border-bottom: 1px solid var(--border);
   font-size: .78rem;
+  min-width: 0;
 }
-.update-status { display: flex; align-items: center; gap: .4rem; color: var(--muted); }
+.update-status {
+  display: flex; align-items: center; gap: .4rem;
+  color: var(--muted);
+  min-width: 0;   /* permite que el texto se trunque en vez de desbordar */
+  overflow: hidden;
+}
+#update-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .status-dot {
   width: 7px; height: 7px; border-radius: 50%;
@@ -88,9 +115,12 @@ body {
 @keyframes blink { 0%,100% { opacity:1 } 50% { opacity:.25 } }
 
 .main {
+  width: 100%;
   max-width: 1000px; margin: 0 auto;
   padding: 1.25rem;
   display: flex; flex-direction: column; gap: 1.25rem;
+  /* min-width:0 evita que un hijo flex/grid empuje el layout */
+  min-width: 0;
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -101,10 +131,13 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--r);
   padding: 1.25rem;
+  min-width: 0;    /* evita que el contenido (ej. chart) expanda más allá del grid */
+  overflow: hidden; /* confina el canvas del gráfico */
 }
 .section-header {
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 1rem;
+  min-width: 0;
 }
 .section-title {
   font-size: .82rem; font-weight: 600;
@@ -119,7 +152,8 @@ body {
    ══════════════════════════════════════════════════════════════════ */
 .cotizaciones-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  /* min() previene que la columna mínima supere el ancho disponible */
+  grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr));
   gap: .75rem;
 }
 .card {
@@ -180,7 +214,12 @@ body {
 /* ══════════════════════════════════════════════════════════════════
    Chart
    ══════════════════════════════════════════════════════════════════ */
-.chart-controls { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+.chart-controls {
+  display: flex; align-items: center; gap: .4rem;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%; /* nunca desborda la section-header */
+}
 
 /* ── Botones de rango ────────────────────────────────────────────── */
 .range-btns { display: flex; gap: 2px; }
@@ -235,7 +274,18 @@ body {
 .var-down    { color: var(--danger); }
 .var-neutral { color: var(--muted); }
 
-.chart-container { position: relative; height: 220px; margin-top: .6rem; }
+.chart-container {
+  position: relative;
+  width: 100%;
+  height: 220px;
+  margin-top: .6rem;
+  overflow: hidden; /* confina el canvas: si chart.js sobreestima el ancho, se recorta */
+}
+/* El canvas de Chart.js nunca debe exceder su contenedor */
+.chart-container canvas {
+  max-width: 100% !important;
+  display: block;
+}
 .chart-empty {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
@@ -436,6 +486,7 @@ body {
   border-radius: var(--r-sm);
   color: var(--text); font-size: .78rem;
   padding: .28rem .5rem; cursor: pointer;
+  max-width: 100%; /* evita que un select largo desborde en mobile */
 }
 .input-with-hint { position: relative; }
 .input-hint {
@@ -464,16 +515,20 @@ body {
   position: fixed; bottom: 1.25rem; right: 1.25rem;
   display: flex; flex-direction: column; gap: .4rem;
   z-index: 2000; pointer-events: none;
+  /* El ancho máximo evita que los toasts empujen el viewport en mobile */
+  max-width: calc(100vw - 2.5rem);
 }
 .toast {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   padding: .65rem 1rem; font-size: .84rem;
-  box-shadow: var(--shadow); max-width: 300px;
+  box-shadow: var(--shadow);
+  width: max-content; max-width: 300px;
   pointer-events: all;
   display: flex; align-items: center; gap: .45rem;
   animation: toastIn .25s ease;
+  word-break: break-word;
 }
 .toast.success { border-left: 3px solid var(--success); }
 .toast.error   { border-left: 3px solid var(--danger);  }
@@ -501,8 +556,12 @@ body {
 
   /* Historial: controles en dos líneas */
   .section-header { flex-wrap: wrap; gap: .5rem; }
-  .chart-controls  { flex-wrap: wrap; gap: .35rem; }
+  .chart-controls  { flex-wrap: wrap; gap: .35rem; width: 100%; }
   .range-btns      { flex-wrap: wrap; }
+
+  /* Toast más pequeño y pegado al borde */
+  .toast-container { right: .75rem; bottom: .75rem; max-width: calc(100vw - 1.5rem); }
+  .toast { max-width: calc(100vw - 1.5rem); font-size: .8rem; }
 
   /* Modal: ocupa toda la pantalla de forma nativa en mobile */
   .modal-overlay { padding: 0; align-items: flex-end; }
@@ -522,4 +581,5 @@ body {
 @media (max-width: 360px) {
   .price-value { font-size: .82rem; }
   .app-title   { font-size: 1rem; }
+  .range-btns .btn-range { font-size: .68rem; padding: .2rem .4rem; }
 }
