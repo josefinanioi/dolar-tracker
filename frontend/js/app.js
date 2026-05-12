@@ -620,9 +620,24 @@ function setupListeners() {
 
 const STALE_MS = 2 * 60 * 1000;
 
-function refreshAll() {
-  updateCotizaciones();
-  updateHistorial();
+// Lock de concurrencia: evita que múltiples visibilitychange/focus/setInterval
+// que llegan al mismo tiempo (o en ms de diferencia) lancen refrescos paralelos.
+// El lock dura hasta que updateCotizaciones termine (la operación más larga).
+let _refreshInProgress = false;
+
+async function refreshAll() {
+  if (_refreshInProgress) {
+    console.log('[refreshAll] ya en progreso — descartando llamada duplicada');
+    return;
+  }
+  _refreshInProgress = true;
+  try {
+    // Lanzar en paralelo pero esperar a updateCotizaciones para liberar el lock
+    // updateHistorial puede correr concurrentemente — no afecta alertas
+    await Promise.all([updateCotizaciones(), updateHistorial()]);
+  } finally {
+    _refreshInProgress = false;
+  }
 }
 
 // Guard: setupAutoRefresh solo debe llamarse UNA vez por ciclo de vida de la página.
@@ -639,6 +654,10 @@ function setupAutoRefresh() {
 
   setInterval(refreshAll, CONFIG.UPDATE_INTERVAL);
 
+  // visibilitychange cubre TODOS los casos: cambio de tab, PWA al frente,
+  // Alt+Tab de regreso al browser, etc.
+  // window.focus se ELIMINA — era redundante y causaba llamadas dobles/triples
+  // (ambos eventos se disparan simultáneamente al volver a la tab).
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
     const elapsed = state.lastUpdate ? Date.now() - state.lastUpdate.getTime() : Infinity;
@@ -646,11 +665,6 @@ function setupAutoRefresh() {
       console.log(`[auto-refresh] Tab visible, datos de ${Math.round(elapsed / 1000)}s → refrescando`);
       refreshAll();
     }
-  });
-
-  window.addEventListener('focus', () => {
-    const elapsed = state.lastUpdate ? Date.now() - state.lastUpdate.getTime() : Infinity;
-    if (elapsed > STALE_MS) refreshAll();
   });
 }
 
