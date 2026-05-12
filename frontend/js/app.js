@@ -221,6 +221,7 @@ const MAX_RETRIES     = RETRY_TIMEOUTS.length;
 // ══════════════════════════════════════════════════════════════════
 
 async function updateCotizaciones() {
+  console.count('[updateCotizaciones] llamado'); // si aparece > 1 simultáneo → problema
   const btn = document.getElementById('refresh-btn');
   btn?.classList.add('spinning');
 
@@ -624,7 +625,18 @@ function refreshAll() {
   updateHistorial();
 }
 
+// Guard: setupAutoRefresh solo debe llamarse UNA vez por ciclo de vida de la página.
+// Si se llama más de una vez → múltiples setInterval → múltiples evalAlertas por ciclo.
+let _autoRefreshInitialized = false;
+
 function setupAutoRefresh() {
+  if (_autoRefreshInitialized) {
+    console.error('[auto-refresh] ⚠️ setupAutoRefresh llamado más de una vez — IGNORANDO. Revisar si init() se ejecuta múltiples veces.');
+    return;
+  }
+  _autoRefreshInitialized = true;
+  console.log('[auto-refresh] iniciando — intervalo:', CONFIG.UPDATE_INTERVAL, 'ms');
+
   setInterval(refreshAll, CONFIG.UPDATE_INTERVAL);
 
   document.addEventListener('visibilitychange', () => {
@@ -648,6 +660,16 @@ function setupAutoRefresh() {
 
 async function init() {
   console.log('[app] 🚀 init start');
+  console.count('[app] init llamado'); // detecta si init() corre más de una vez
+
+  // Migrar alertas viejas que puedan tener valores numéricos como strings.
+  // getAlertas() ya normaliza en cada lectura, pero hacemos un save explícito
+  // para que la versión persistida también quede corregida.
+  try {
+    const alertasActuales = getAlertas(); // lee + normaliza
+    localStorage.setItem('dolar-ar-alerts', JSON.stringify(alertasActuales));
+    console.log('[app] migración numérica de alertas OK:', alertasActuales.length, 'alertas');
+  } catch {}
 
   loadTheme();
 

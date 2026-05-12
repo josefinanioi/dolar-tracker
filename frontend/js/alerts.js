@@ -55,10 +55,20 @@ function getUserId() {
 
 // ── CRUD ──────────────────────────────────────────────────────────
 
+// ── Migración: normaliza campos numéricos que puedan haber quedado como strings ──
+// Pasa cada vez que se lee — barato y defensivo.
+function _normalizarNumerosAlerta(a) {
+  if (a.valor       != null) a.valor        = Number(a.valor);
+  if (a.porcentaje  != null) a.porcentaje   = Number(a.porcentaje);
+  if (a.consecutivos != null) a.consecutivos = Number(a.consecutivos);
+  return a;
+}
+
 function getAlertas() {
   try {
-    const list = JSON.parse(localStorage.getItem(ALERTS_KEY) || '[]');
-    return list.map(a => ({ ...a, tipo: migrarTipo(a.tipo) }));
+    const raw  = localStorage.getItem(ALERTS_KEY);
+    const list = JSON.parse(raw || '[]');
+    return list.map(a => _normalizarNumerosAlerta({ ...a, tipo: migrarTipo(a.tipo) }));
   } catch {
     return [];
   }
@@ -178,13 +188,26 @@ function evalAlertas(cotizaciones, history = []) {
     return [];
   }
 
-  // Lee SIEMPRE desde localStorage para reflejar eliminaciones inmediatas.
-  // No usar una copia en memoria — así una alerta borrada no vuelve a dispararse.
-  const alertas    = getAlertas();
-  const lastPrices = _getLastPrices(); // precios del ciclo anterior, para detección de cruce
+  // Contar cuántas veces se ejecuta por ciclo de vida de la página.
+  // Si aparece más de 1 en el mismo segundo → hay loops/listeners duplicados.
+  console.count('[evalAlertas] ejecutado');
 
-  console.log(`[evalAlertas] evaluando ${alertas.length} alerta(s) activa(s)`);
-  console.log('[evalAlertas] Alertas activas:', alertas.map(a => `${a.id}(${a.tipAlerta},rep=${a.repeating},trig=${a.triggered})`));
+  // Lee SIEMPRE desde localStorage para reflejar eliminaciones inmediatas.
+  // getAlertas() normaliza campos numéricos en cada lectura (ver _normalizarNumerosAlerta).
+  const alertas    = getAlertas();
+  const lastPrices = _getLastPrices(); // precios del ciclo anterior
+
+  console.log(`[evalAlertas] ${alertas.length} alerta(s) en localStorage:`,
+    alertas.map(a => ({
+      id:         a.id,
+      tipAlerta:  a.tipAlerta,
+      condicion:  a.condicion,
+      valor:      a.valor,
+      tipoValor:  typeof a.valor,
+      triggered:  a.triggered,
+      repeating:  a.repeating,
+    }))
+  );
 
   const triggered = [];
 
@@ -195,8 +218,17 @@ function evalAlertas(cotizaciones, history = []) {
 
       const prices = cotizaciones[alert.tipo];
       if (!prices) continue;
-      const precioActual = prices[alert.campo];
-      if (precioActual == null) continue;
+
+      // ── Normalización numérica estricta ────────────────────────
+      // Aunque getAlertas() ya normaliza, coercemos de nuevo aquí por seguridad.
+      // Esto cubre cotizaciones que vengan con strings desde la API.
+      const precioRaw    = prices[alert.campo];
+      const precioActual = Number(precioRaw);
+
+      if (precioRaw == null || Number.isNaN(precioActual)) {
+        console.warn('[evalAlertas] precioActual inválido', { tipo: alert.tipo, campo: alert.campo, precioRaw });
+        continue;
+      }
 
       const tipAlerta = alert.tipAlerta || 'umbral';
       let fired   = false;
@@ -217,57 +249,85 @@ function evalAlertas(cotizaciones, history = []) {
       //   - Luego puede dispararse nuevamente en el próximo cruce.
       //
       if (tipAlerta === 'umbral') {
-        const key            = `${alert.tipo}.${alert.campo}`;
-        const precioAnterior = lastPrices[key]; // undefined = primera evaluación
+        // Coerción explícita — alert.valor pudo persistir como string en localStorage
+        const valorObjetivo = Number(alert.valor);
+
+        if (Number.isNaN(valorObjetivo)) {
+          console.warn('[evalAlertas] alert.valor inválido, saltando', { alertaId: alert.id, valor: alert.valor, tipoValor: typeof alert.valor });
+          continue;
+        }
+
+        const key              = `${alert.tipo}.${alert.campo}`;
+        const precioAnteriorRaw = lastPrices[key];
+        const precioAnterior    = precioAnteriorRaw != null ? Number(precioAnteriorRaw) : null;
+
+        // ── LOG DETALLADO DE COMPARACIÓN ────────────────────────
+        console.log('[evalAlertas] umbral check', {
+          alertaId:    alert.id,
+          condicion:   alert.condicion,
+          precio:      precioActual,
+          tipoPrecio:  typeof precioActual,
+          objetivo:    valorObjetivo,
+          tipoObjetivo: typeof valorObjetivo,
+          precioPrevio: precioAnterior,
+          triggered:   alert.triggered,
+          repeating:   alert.repeating,
+        });
 
         if (alert.condicion === 'baja') {
-          const ahoraBajo = precioActual < alert.valor; // estricto: < no <=
+          const ahoraBajo = precioActual < valorObjetivo; // ESTRICTO — NO <=
+          console.log(`[evalAlertas] comparación: ${precioActual} < ${valorObjetivo} = ${ahoraBajo}`);
 
           // Auto-reset para repetibles: precio volvió a zona segura (≥ umbral)
           if (alert.triggered && alert.repeating && !ahoraBajo) {
-            console.log(`[evalAlertas] auto-reset alerta ${alert.id}: precio ${precioActual} ≥ umbral ${alert.valor}`);
+            console.log(`[evalAlertas] auto-reset alerta ${alert.id}: ${precioActual} ≥ ${valorObjetivo}`);
             resetAlerta(alert.id);
             alert.triggered = false; // sincronizar copia local
           }
 
           // Cruce descendente: ahora < umbral, Y antes estaba ≥ umbral (o primer ciclo)
-          // No disparar si ya está en estado "triggered" (evita spam mientras sigue bajo)
           if (ahoraBajo && !alert.triggered) {
-            const cruzó = (precioAnterior == null) || (precioAnterior >= alert.valor);
+            const cruzó = (precioAnterior === null) || (precioAnterior >= valorObjetivo);
+            console.log(`[evalAlertas] cruce "baja": ahoraBajo=${ahoraBajo}, precioAnterior=${precioAnterior}, cruzó=${cruzó}`);
             fired = cruzó;
           }
 
           if (fired) {
-            const ant = precioAnterior != null ? `$${precioAnterior.toLocaleString('es-AR')} → ` : '';
-            mensaje = `${TIPO_LABEL[alert.tipo]} ${alert.campo} bajó de $${alert.valor.toLocaleString('es-AR')} (${ant}$${precioActual.toLocaleString('es-AR')})`;
+            const ant = precioAnterior !== null ? `$${precioAnterior.toLocaleString('es-AR')} → ` : '';
+            mensaje = `${TIPO_LABEL[alert.tipo]} ${alert.campo} bajó de $${valorObjetivo.toLocaleString('es-AR')} (${ant}$${precioActual.toLocaleString('es-AR')})`;
           }
         }
 
         else if (alert.condicion === 'sube') {
-          const ahoraArriba = precioActual > alert.valor; // estricto: > no >=
+          const ahoraArriba = precioActual > valorObjetivo; // ESTRICTO — NO >=
+          console.log(`[evalAlertas] comparación: ${precioActual} > ${valorObjetivo} = ${ahoraArriba}`);
 
           // Auto-reset para repetibles: precio volvió a zona segura (≤ umbral)
           if (alert.triggered && alert.repeating && !ahoraArriba) {
-            console.log(`[evalAlertas] auto-reset alerta ${alert.id}: precio ${precioActual} ≤ umbral ${alert.valor}`);
+            console.log(`[evalAlertas] auto-reset alerta ${alert.id}: ${precioActual} ≤ ${valorObjetivo}`);
             resetAlerta(alert.id);
             alert.triggered = false;
           }
 
           // Cruce ascendente: ahora > umbral, Y antes estaba ≤ umbral (o primer ciclo)
           if (ahoraArriba && !alert.triggered) {
-            const cruzó = (precioAnterior == null) || (precioAnterior <= alert.valor);
+            const cruzó = (precioAnterior === null) || (precioAnterior <= valorObjetivo);
+            console.log(`[evalAlertas] cruce "sube": ahoraArriba=${ahoraArriba}, precioAnterior=${precioAnterior}, cruzó=${cruzó}`);
             fired = cruzó;
           }
 
           if (fired) {
-            const ant = precioAnterior != null ? `$${precioAnterior.toLocaleString('es-AR')} → ` : '';
-            mensaje = `${TIPO_LABEL[alert.tipo]} ${alert.campo} subió de $${alert.valor.toLocaleString('es-AR')} (${ant}$${precioActual.toLocaleString('es-AR')})`;
+            const ant = precioAnterior !== null ? `$${precioAnterior.toLocaleString('es-AR')} → ` : '';
+            mensaje = `${TIPO_LABEL[alert.tipo]} ${alert.campo} subió de $${valorObjetivo.toLocaleString('es-AR')} (${ant}$${precioActual.toLocaleString('es-AR')})`;
           }
         }
       }
 
       // ── Variación % ─────────────────────────────────────────────
       else if (tipAlerta === 'variacion' && history.length >= 2) {
+        const porcentaje = Number(alert.porcentaje);
+        if (Number.isNaN(porcentaje)) continue;
+
         const periodoMs = PERIODO_MS[alert.periodo] || PERIODO_MS['24h'];
         const targetTs  = Date.now() - periodoMs;
         const snaps     = history.filter(s => s[alert.tipo]?.[alert.campo] != null);
@@ -275,12 +335,12 @@ function evalAlertas(cotizaciones, history = []) {
           const snapOld   = snaps.reduce((b, s) =>
             Math.abs(s.ts - targetTs) < Math.abs(b.ts - targetTs) ? s : b, snaps[0]
           );
-          const precioOld = snapOld[alert.tipo][alert.campo];
-          if (precioOld && precioOld !== 0) {
+          const precioOld = Number(snapOld[alert.tipo][alert.campo]);
+          if (!Number.isNaN(precioOld) && precioOld !== 0) {
             const pct     = ((precioActual - precioOld) / precioOld) * 100;
             const condMet =
-              (alert.condicion === 'sube' && pct >=  alert.porcentaje) ||
-              (alert.condicion === 'baja' && pct <= -alert.porcentaje);
+              (alert.condicion === 'sube' && pct >=  porcentaje) ||
+              (alert.condicion === 'baja' && pct <= -porcentaje);
 
             // Auto-reset para repetibles: condición dejó de cumplirse
             if (alert.triggered && alert.repeating && !condMet) {
@@ -303,7 +363,8 @@ function evalAlertas(cotizaciones, history = []) {
         const fromTs    = Date.now() - periodoMs;
         const vals = history
           .filter(s => s.ts >= fromTs && s[alert.tipo]?.[alert.campo] != null)
-          .map(s => s[alert.tipo][alert.campo]);
+          .map(s => Number(s[alert.tipo][alert.campo]))
+          .filter(v => !Number.isNaN(v));
         if (vals.length >= 5) {
           const extremoVal = alert.extremo === 'minimo' ? Math.min(...vals) : Math.max(...vals);
           const diff       = Math.abs(precioActual - extremoVal) / extremoVal;
@@ -325,11 +386,12 @@ function evalAlertas(cotizaciones, history = []) {
 
       // ── Tendencia ────────────────────────────────────────────────
       else if (tipAlerta === 'tendencia' && history.length >= 4) {
-        const n      = (alert.consecutivos || 3) + 1;
+        const n      = (Number(alert.consecutivos) || 3) + 1;
         const recent = history
           .filter(s => s[alert.tipo]?.[alert.campo] != null)
           .slice(-n)
-          .map(s => s[alert.tipo][alert.campo]);
+          .map(s => Number(s[alert.tipo][alert.campo]))
+          .filter(v => !Number.isNaN(v));
         if (recent.length >= n) {
           const esSubida = recent.every((v, i) => i === 0 || v > recent[i - 1]);
           const esBajada = recent.every((v, i) => i === 0 || v < recent[i - 1]);
@@ -352,7 +414,7 @@ function evalAlertas(cotizaciones, history = []) {
       }
 
       if (fired) {
-        console.log(`[evalAlertas] 🔔 disparando alerta ${alert.id}: ${mensaje}`);
+        console.log(`[evalAlertas] 🔔 DISPARO alerta ${alert.id}: ${mensaje}`);
         triggerAlerta(alert.id);
         triggered.push({ alert, tipo: alert.tipo, precio: precioActual, mensaje });
       }
@@ -367,3 +429,29 @@ function evalAlertas(cotizaciones, history = []) {
 
   return triggered;
 }
+
+// ── Helpers de debug (disponibles en consola del navegador) ───────────
+//
+//   window._alertasDebug.estado()         → muestra alertas + lastPrices
+//   window._alertasDebug.limpiarPrecios() → resetea lastPrices (útil para forzar re-cruce)
+//   window._alertasDebug.limpiarAlertas() → borra TODAS las alertas de localStorage
+//
+window._alertasDebug = {
+  estado() {
+    console.table(getAlertas().map(a => ({
+      id: a.id, tipo: a.tipo, campo: a.campo, tipAlerta: a.tipAlerta,
+      condicion: a.condicion, valor: a.valor, tipoValor: typeof a.valor,
+      triggered: a.triggered, repeating: a.repeating,
+    })));
+    console.log('lastPrices:', _getLastPrices());
+  },
+  limpiarPrecios() {
+    localStorage.removeItem(LAST_PRICES_KEY);
+    console.log('[debug] lastPrices borrado — el próximo ciclo considera todos los precios como "primer cruce"');
+  },
+  limpiarAlertas() {
+    localStorage.removeItem(ALERTS_KEY);
+    localStorage.removeItem(LAST_PRICES_KEY);
+    console.log('[debug] TODAS las alertas y precios borrados de localStorage');
+  },
+};
