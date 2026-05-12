@@ -72,47 +72,16 @@ body {
   min-height: 100dvh;           /* dvh = dynamic viewport height (no 100vh fallback) */
   line-height: 1.5;
   /*
-   * padding-top: env(safe-area-inset-top) — iOS PWA / notch fix (ENFOQUE CORRECTO).
+   * padding-top: env(safe-area-inset-top) — ÚNICA FUENTE de safe-area en el layout.
    *
-   * En lugar de meter el padding en el header (que hace que el elemento .header
-   * empiece en y=0, DETRÁS del notch), ponemos el padding en el BODY.
-   * Así NINGÚN contenido web se renderiza detrás del notch: el body completo
-   * empieza por debajo de él. El área y=0..notch está cubierta por body::before.
+   * Empuja TODO el contenido del body (incluido el header) por debajo del notch.
+   * Con viewport-fit=cover el viewport empieza en y=0 (detrás del notch).
+   * Este padding es la única compensación — no hay hacks en el header ni pseudo-elementos.
    *
    * En dispositivos sin notch env() devuelve 0 — sin efecto colateral.
    */
   padding-top: env(safe-area-inset-top);
-  /*
-   * SIN overflow-x: hidden, SIN position: relative, SIN -webkit-overflow-scrolling.
-   * SIN overscroll-behavior-y: iOS lo ignora en standalone mode y puede causar
-   * comportamientos inesperados con el bounce scroll nativo del WKWebView.
-   */
   transition: background var(--t), color var(--t);
-}
-
-/*
- * body::before — filler del área del notch.
- *
- * El body tiene padding-top = notch_height, por lo que el área
- * y=0..notch_height queda "vacía" (muestra el background del html).
- * Este pseudo-elemento la cubre con el mismo color del header, creando
- * la ilusión de que el header se extiende hasta el borde de la pantalla.
- *
- * Hereda las CSS vars del body → cambia correctamente con el tema claro/oscuro.
- * pointer-events: none → no intercepta ningún toque.
- * z-index: 99 → por debajo del header (z-index: 100) y del modal (z-index: 1000).
- */
-body::before {
-  content: '';
-  position: fixed;
-  top: 0; left: 0; right: 0;
-  height: env(safe-area-inset-top);
-  background: var(--bg-card);
-  z-index: 99;
-  pointer-events: none;
-  /* Fuerza capa de compositing para evitar lag en iOS */
-  -webkit-transform: translateZ(0);
-          transform: translateZ(0);
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -120,30 +89,27 @@ body::before {
    ══════════════════════════════════════════════════════════════════ */
 .header {
   /*
-   * top: env(safe-area-inset-top) — el header PEGA ("sticks") al BORDE INFERIOR
-   * del notch, no al borde superior de la pantalla (y=0, que está DETRÁS del notch).
+   * position: sticky; top: 0 — el header se adhiere al borde SUPERIOR del viewport.
    *
-   * Combinado con body { padding-top: env(safe-area-inset-top) }:
-   *   - El elemento .header empieza en su posición normal y=notch_height.
-   *   - Al hacer scroll, el header se fija en top=notch_height (debajo del notch).
-   *   - El elemento .header NUNCA entra en la zona del notch → taps 100% accesibles.
-   *   - body::before cubre y=0..notch_height con el color del header.
+   * Con body { padding-top: env(safe-area-inset-top) } el body completo empieza
+   * debajo del notch. El header, al ser el primer hijo del body, también empieza
+   * debajo del notch sin necesitar safe-area propio.
    *
-   * SIN backdrop-filter: bug conocido en iOS WKWebView — backdrop-filter en
-   * elementos sticky/fixed crea una capa de compositing separada. El hit-testing
-   * de touch events puede usar la posición de la capa visual (con blur) en lugar
-   * de la posición del layout, desalineando la zona de tap. Se elimina para
-   * garantizar que los botones del header reciban eventos táctiles correctamente.
+   * top: 0 (NO top: env()): el safe-area está en el body, no en el header.
+   * Usar top: env() crearía un doble offset (body padding + header top) y
+   * desalinearía la zona táctil en iOS PWA.
+   *
+   * backdrop-filter eliminado: bug en iOS WKWebView — blur en sticky/fixed crea
+   * una capa de compositing separada y desalinea el hit-testing de touch events.
    */
   position: sticky;
-  top: env(safe-area-inset-top);
+  top: 0;
   z-index: 100;
   display: flex; align-items: center; justify-content: space-between;
-  padding: .75rem 1.25rem;    /* padding normal — sin safe-area calc */
+  padding: .75rem 1.25rem;
   width: 100%;
   background: var(--bg-card);
   border-bottom: 1px solid var(--border);
-  /* backdrop-filter eliminado — ver comentario arriba */
 }
 .header-left  { display: flex; align-items: center; gap: .5rem; }
 .header-right { display: flex; gap: .4rem; }
