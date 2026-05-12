@@ -45,10 +45,12 @@
 html {
   font-size: 16px;
   -webkit-text-size-adjust: 100%;
-  /* pan-y: permite scroll vertical, bloquea scroll/zoom horizontal.
-     "manipulation" era demasiado amplio y podía bloquear el scroll recovery en iOS. */
-  touch-action: pan-y;
-  overflow-x: clip; /* más fuerte que hidden en mobile: no crea scroll container */
+  /*
+   * overflow-x: clip — contiene overflow horizontal SIN crear un scroll container.
+   * (overflow: hidden en html/body en iOS PWA crea un scroll container secundario
+   *  que rompe el momentum scroll y bloquea el scroll nativo del body.)
+   */
+  overflow-x: clip;
 }
 
 body {
@@ -57,12 +59,15 @@ body {
   color: var(--text);
   width: 100%;
   min-height: 100vh;
-  min-height: 100dvh;              /* dynamic viewport: respeta barra del browser */
+  min-height: 100dvh;           /* dynamic viewport height */
   line-height: 1.5;
-  overflow-x: hidden;
-  position: relative;              /* contiene overflow horizontal en iOS */
-  -webkit-overflow-scrolling: touch; /* scroll suave en iOS legacy */
-  overscroll-behavior-y: contain;  /* evita pull-to-refresh accidental en Android */
+  /*
+   * SIN overflow-x: hidden, SIN position: relative, SIN -webkit-overflow-scrolling.
+   * En iOS PWA, overflow: hidden en body hace que el body deje de ser el scroll root,
+   * transfiriendo el scroll al <html>. Esto rompe el momentum scroll y el touch recovery.
+   * overflow-x: clip en <html> es suficiente para contener el overflow horizontal.
+   */
+  overscroll-behavior-y: contain; /* evita pull-to-refresh en Android */
   transition: background var(--t), color var(--t);
 }
 
@@ -281,10 +286,17 @@ body {
   margin-top: .6rem;
   overflow: hidden; /* confina el canvas: si chart.js sobreestima el ancho, se recorta */
 }
-/* El canvas de Chart.js nunca debe exceder su contenedor */
+/* El canvas de Chart.js nunca debe exceder su contenedor ni bloquear el scroll */
 .chart-container canvas {
   max-width: 100% !important;
   display: block;
+  /*
+   * touch-action: pan-y — KEY FIX para el scroll en mobile/PWA.
+   * Le dice al browser: "manejá el scroll vertical nativamente sobre este canvas,
+   * no lo cedas a JavaScript". Chart.js seguirá recibiendo touchstart/touchend
+   * para mostrar tooltips, pero no podrá bloquear el scroll vertical del body.
+   */
+  touch-action: pan-y;
 }
 .chart-empty {
   position: absolute; inset: 0;

@@ -115,10 +115,22 @@ function renderChart(history, tipo, campo, rangeMs = 24 * 60 * 60 * 1000) {
     options: {
       responsive:          true,
       maintainAspectRatio: false,
+      /*
+       * events: excluir 'touchmove' del event loop de Chart.js.
+       * Chart.js registra touchmove sin { passive: true }, lo que puede competir
+       * con el scroll nativo. Sin touchmove el tooltip aparece al tocar (touchstart)
+       * y al hacer hover (mousemove en desktop) — UX aceptable en mobile.
+       * El scroll vertical es manejado por el browser vía touch-action: pan-y en el canvas.
+       */
+      events: ['mousemove', 'mouseout', 'click', 'touchstart', 'touchend'],
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { display: false },
-        tooltip: { callbacks: tooltipCallbacks },
+        tooltip: {
+          callbacks: tooltipCallbacks,
+          // El tooltip no captura pointer events — no bloquea taps sobre otros elementos
+          external: null,
+        },
       },
       scales: {
         x: {
