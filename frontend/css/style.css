@@ -77,7 +77,14 @@ body {
 .header {
   position: sticky; top: 0; z-index: 100;
   display: flex; align-items: center; justify-content: space-between;
-  padding: .75rem 1.25rem;
+  /*
+   * env(safe-area-inset-top) — iOS PWA / notch fix.
+   * Con viewport-fit=cover el contenido empieza en (0,0) absoluto, detrás del notch.
+   * Sumamos el inset de la safe area al padding superior para que el contenido
+   * del header quede siempre DEBAJO del notch / status bar.
+   * En dispositivos sin notch env() vale 0, por lo que no hay efecto negativo.
+   */
+  padding: calc(env(safe-area-inset-top) + .75rem) 1.25rem .75rem;
   width: 100%;                /* no desborda cuando body tiene overflow-x:hidden */
   background: var(--bg-card);
   border-bottom: 1px solid var(--border);
@@ -530,7 +537,10 @@ body {
    Toast
    ══════════════════════════════════════════════════════════════════ */
 .toast-container {
-  position: fixed; bottom: 1.25rem; right: 1.25rem;
+  position: fixed;
+  /* env(safe-area-inset-bottom) — home indicator de iPhone en PWA standalone */
+  bottom: calc(env(safe-area-inset-bottom) + 1.25rem);
+  right: calc(env(safe-area-inset-right) + 1.25rem);
   display: flex; flex-direction: column; gap: .4rem;
   z-index: 2000; pointer-events: none;
   /* El ancho máximo evita que los toasts empujen el viewport en mobile */
@@ -578,7 +588,11 @@ body {
   .range-btns      { flex-wrap: wrap; }
 
   /* Toast más pequeño y pegado al borde */
-  .toast-container { right: .75rem; bottom: .75rem; max-width: calc(100vw - 1.5rem); }
+  .toast-container {
+    right: calc(env(safe-area-inset-right) + .75rem);
+    bottom: calc(env(safe-area-inset-bottom) + .75rem);
+    max-width: calc(100vw - 1.5rem);
+  }
   .toast { max-width: calc(100vw - 1.5rem); font-size: .8rem; }
 
   /* Modal: ocupa toda la pantalla de forma nativa en mobile */
@@ -590,7 +604,13 @@ body {
   }
   .modal-header { padding: .875rem 1rem; }
   .modal-body   { padding: .875rem 1rem; gap: .7rem; }
-  .modal-footer { padding: .75rem 1rem; }
+  /*
+   * El modal es un bottom sheet en mobile → el footer queda pegado al borde inferior.
+   * env(safe-area-inset-bottom) evita que el home indicator tape los botones en iPhone.
+   */
+  .modal-footer {
+    padding: .75rem 1rem calc(env(safe-area-inset-bottom) + .75rem);
+  }
 
   /* Columna única en todos los form-row del modal */
   .form-row { grid-template-columns: 1fr; }
