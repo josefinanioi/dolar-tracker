@@ -41,20 +41,26 @@ const PERIODO_MS = {
 // También normaliza campos numéricos que puedan haberse guardado como strings.
 
 function _migrarAlerta(a) {
-  // Numéricos
+  // ── 1. Normalizar numéricos ─────────────────────────────────────
   if (a.valor        != null) a.valor        = Number(a.valor);
   if (a.porcentaje   != null) a.porcentaje   = Number(a.porcentaje);
   if (a.consecutivos != null) a.consecutivos = Number(a.consecutivos);
 
-  // State machine: si ya tiene estado válido, no tocar
-  if (a.state === 'armed' || a.state === 'triggered' || a.state === 'completed') return a;
-
-  // Migrar desde boolean triggered → state
-  if (a.triggered === true) {
-    a.state = a.repeating ? 'triggered' : 'completed';
-  } else {
-    a.state = 'armed';
+  // ── 2. Asegurar state machine ───────────────────────────────────
+  // NO hay return temprano — SIEMPRE llegamos al paso 3.
+  if (a.state !== 'armed' && a.state !== 'triggered' && a.state !== 'completed') {
+    // Migrar desde boolean legacy
+    a.state = (a.triggered === true)
+      ? (a.repeating ? 'triggered' : 'completed')
+      : 'armed';
   }
+
+  // ── 3. Purgar campos legacy — sin excepciones ───────────────────
+  // Este era el bug: el `return a` temprano evitaba que esta limpieza
+  // corriera en alertas que ya tenían `state`, dejando `triggered` en el
+  // objeto y re-persistiéndolo en cada _saveAlertas().
+  delete a.triggered;    // boolean legacy — NUNCA más
+  delete a.triggeredAt;  // campo de fecha viejo (ahora es lastTriggeredAt)
 
   return a;
 }
@@ -82,7 +88,10 @@ function getAlertas() {
 }
 
 function _saveAlertas(list) {
-  localStorage.setItem(ALERTS_KEY, JSON.stringify(list));
+  // Sanitizar antes de escribir: eliminar campos legacy por si llegaron en memoria.
+  // Garantiza que el storage NUNCA contenga `triggered` ni `triggeredAt`.
+  const clean = list.map(({ triggered, triggeredAt, ...rest }) => rest);
+  localStorage.setItem(ALERTS_KEY, JSON.stringify(clean));
 }
 
 // cotizaciones: objeto { oficial, blue, mep, ccl } con precios actuales.

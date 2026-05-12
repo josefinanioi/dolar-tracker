@@ -688,16 +688,31 @@ async function init() {
   console.log('[app] 🚀 init start');
   console.count('[app] init llamado'); // detecta si init() corre más de una vez
 
-  // Migrar alertas al formato state machine (triggered boolean → state string)
-  // y normalizar campos numéricos que puedan haberse guardado como strings.
-  // getAlertas() ya hace la migración en cada lectura; este save la persiste.
+  // ── Migración de storage al arrancar ───────────────────────────
+  // getAlertas() lee, migra state machine Y purga campos legacy (triggered/triggeredAt).
+  // _saveAlertas() sanitiza antes de escribir (elimina triggered aunque esté en memoria).
+  // Este bloque persiste el resultado limpio para que el storage quede saneado
+  // desde la primera carga, sin depender de ciclos posteriores.
   try {
-    const alertasMigradas = getAlertas(); // lee + migra + normaliza
-    localStorage.setItem('dolar-ar-alerts', JSON.stringify(alertasMigradas));
+    const alertasMigradas = getAlertas(); // lee + normaliza + purga legacy
+    // _saveAlertas ya sanitiza, así que esto garantiza storage limpio
+    localStorage.setItem('dolar-ar-alerts', JSON.stringify(
+      alertasMigradas.map(({ triggered, triggeredAt, ...rest }) => rest) // doble seguro
+    ));
     localStorage.removeItem('dolar-ar-last-prices'); // clave vieja — ya no se usa
-    console.log('[app] migración de alertas OK:', alertasMigradas.length,
-      'alertas →', alertasMigradas.map(a => `${a.id.slice(-6)}[${a.state}]`).join(', '));
-  } catch {}
+    console.log('[app] storage saneado:', alertasMigradas.length, 'alertas');
+    console.log('[app] estados:', alertasMigradas.map(a => `${a.id.slice(-6)}→${a.state}`).join(', '));
+    // Verificar que no queden campos legacy
+    const raw = JSON.parse(localStorage.getItem('dolar-ar-alerts') || '[]');
+    const conLegacy = raw.filter(a => 'triggered' in a || 'triggeredAt' in a);
+    if (conLegacy.length) {
+      console.error('[app] ❌ aún hay campos legacy en storage:', conLegacy);
+    } else {
+      console.log('[app] ✅ storage sin campos legacy (triggered eliminado)');
+    }
+  } catch (err) {
+    console.error('[app] ❌ error en migración de storage:', err);
+  }
 
   loadTheme();
 
