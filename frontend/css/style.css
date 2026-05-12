@@ -57,11 +57,19 @@ html {
   font-size: 16px;
   -webkit-text-size-adjust: 100%;
   /*
-   * overflow-x: clip — contiene overflow horizontal SIN crear un scroll container.
-   * (overflow: hidden en html/body en iOS PWA crea un scroll container secundario
-   *  que rompe el momentum scroll y bloquea el scroll nativo del body.)
+   * height: 100% — el html ocupa al menos el viewport. Sin overflow properties.
+   *
+   * IMPORTANTE iOS PWA standalone: cualquier overflow en <html> (incluso
+   * overflow-x: clip) puede hacer que iOS WKWebView trate a <html> como el
+   * scroll container en lugar de window. Esto rompe:
+   *   - position: sticky (referencia <html> en vez de window)
+   *   - touch hit-testing (coordenadas se calculan con el scroll offset de <html>)
+   *   - scroll restoration tras interacciones
+   *
+   * El overflow horizontal se controla por .main { width:100%; max-width:1000px }
+   * y canvas { max-width:100% } — sin necesidad de overflow en el root.
    */
-  overflow-x: clip;
+  height: 100%;
 }
 
 body {
@@ -69,7 +77,7 @@ body {
   background: var(--bg);
   color: var(--text);
   width: 100%;
-  min-height: 100dvh;           /* dvh = dynamic viewport height (no 100vh fallback) */
+  min-height: 100%;             /* relativo al html { height:100% } = viewport height */
   line-height: 1.5;
   /*
    * padding-top: env(safe-area-inset-top) — ÚNICA FUENTE de safe-area en el layout.
@@ -491,9 +499,9 @@ body {
   display: flex; flex-direction: column; gap: .9rem;
   overflow-y: auto;
   flex: 1 1 auto;
-  -webkit-overflow-scrolling: touch;
-  /* Scroll suave en iOS */
-  overscroll-behavior: contain;
+  /* -webkit-overflow-scrolling: touch eliminado — legacy property que puede
+     dejar estado de scroll iOS activo incluso con display:none en el parent.
+     overscroll-behavior eliminado — solo el body/window debe controlar scroll. */
 }
 
 /* Footer es flex-child directo del modal → siempre visible,
