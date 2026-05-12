@@ -136,8 +136,14 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--r);
   padding: 1.25rem;
-  min-width: 0;    /* evita que el contenido (ej. chart) expanda más allá del grid */
-  overflow: hidden; /* confina el canvas del gráfico */
+  min-width: 0;
+  /*
+   * SIN overflow:hidden aquí — el canvas del gráfico está contenido por
+   * .chart-container { overflow: hidden } que es suficiente.
+   * overflow:hidden en .section podría crear un scroll chain roto en iOS
+   * WebKit: el browser intenta hacer scroll en la section (que no puede),
+   * no lo encadena correctamente al body, y el gesto queda consumido.
+   */
 }
 .section-header {
   display: flex; align-items: center; justify-content: space-between;

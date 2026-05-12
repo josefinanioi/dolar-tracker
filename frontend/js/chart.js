@@ -116,13 +116,21 @@ function renderChart(history, tipo, campo, rangeMs = 24 * 60 * 60 * 1000) {
       responsive:          true,
       maintainAspectRatio: false,
       /*
-       * events: excluir 'touchmove' del event loop de Chart.js.
-       * Chart.js registra touchmove sin { passive: true }, lo que puede competir
-       * con el scroll nativo. Sin touchmove el tooltip aparece al tocar (touchstart)
-       * y al hacer hover (mousemove en desktop) — UX aceptable en mobile.
-       * El scroll vertical es manejado por el browser vía touch-action: pan-y en el canvas.
+       * events: ['click'] — SOLUCIÓN DEFINITIVA al scroll secuestrado en iOS PWA.
+       *
+       * Cuando events incluye 'mousemove', Chart.js registra un listener de
+       * 'pointermove' en el canvas. Esto activa el automatic pointer capture del
+       * browser en pointerdown: TODOS los pointer events posteriores se redirigen
+       * al canvas hasta pointerup, dejando el scroll "secuestrado" y haciendo
+       * que otros elementos (ej. la campanita del header) no reciban eventos.
+       *
+       * Con solo 'click':
+       *  - Chart.js registra únicamente un listener 'click' en el canvas.
+       *  - No hay pointermove → no hay pointer capture → scroll 100% nativo.
+       *  - En mobile: tap en el gráfico → muestra tooltip en ese punto.
+       *  - En desktop: click → muestra tooltip.
        */
-      events: ['mousemove', 'mouseout', 'click', 'touchstart', 'touchend'],
+      events: ['click'],
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { display: false },
