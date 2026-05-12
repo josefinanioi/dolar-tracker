@@ -146,7 +146,8 @@ function renderAlertas() {
             ${a.triggered
               ? `<button class="btn-icon btn-sm" title="Reactivar" onclick="handleResetAlerta('${a.id}')">↺</button>`
               : ''}
-            <button class="btn-danger" title="Eliminar" onclick="handleDeleteAlerta('${a.id}')">🗑</button>
+            <button class="btn-icon btn-sm" title="Editar" onclick="handleEditAlerta('${a.id}')">✎</button>
+            <button class="btn-danger btn-sm" title="Eliminar" onclick="handleDeleteAlerta('${a.id}')">🗑</button>
           </div>
         </div>`;
     } catch (err) {
@@ -381,19 +382,66 @@ function applyCustomRange() {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Modal de alerta
+// Modal de alerta — Create & Edit
 // ══════════════════════════════════════════════════════════════════
 
+// null = modo creación | string ID = modo edición
+let editingAlertId = null;
+
 function openModal() {
+  editingAlertId = null;
+  document.getElementById('modal-title').textContent      = 'Nueva alerta';
+  document.getElementById('modal-submit-btn').textContent = 'Crear alerta';
+  document.getElementById('alert-form').reset();
   document.getElementById('modal-overlay').classList.remove('hidden');
   switchAlertType('umbral');
   updatePriceHint();
-  document.getElementById('alert-valor').focus();
+}
+
+function openModalEdit(id) {
+  const alerta = getAlertas().find(a => a.id === id);
+  if (!alerta) { showToast('No se encontró la alerta', 'error'); return; }
+
+  editingAlertId = id;
+  document.getElementById('modal-title').textContent      = 'Editar alerta';
+  document.getElementById('modal-submit-btn').textContent = 'Guardar cambios';
+  document.getElementById('alert-form').reset();
+  document.getElementById('modal-overlay').classList.remove('hidden');
+
+  // ── Pre-cargar campos comunes ─────────────────────────────────
+  document.getElementById('alert-tipo').value      = alerta.tipo  || 'oficial';
+  document.getElementById('alert-campo').value     = alerta.campo || 'venta';
+  document.getElementById('alert-repeating').checked = !!alerta.repeating;
+
+  // ── Pre-cargar tipo y campos específicos ──────────────────────
+  const tip = alerta.tipAlerta || 'umbral';
+  switchAlertType(tip);
+
+  if (tip === 'umbral') {
+    document.getElementById('alert-condicion').value = alerta.condicion || 'baja';
+    document.getElementById('alert-valor').value     = alerta.valor     || '';
+  } else if (tip === 'variacion') {
+    document.getElementById('alert-condicion-var').value = alerta.condicion  || 'sube';
+    document.getElementById('alert-porcentaje').value    = alerta.porcentaje || '';
+    document.getElementById('alert-periodo-var').value   = alerta.periodo    || '24h';
+  } else if (tip === 'extremo') {
+    document.getElementById('alert-extremo').value    = alerta.extremo || 'minimo';
+    document.getElementById('alert-periodo-ext').value = alerta.periodo || '7d';
+  } else if (tip === 'tendencia') {
+    document.getElementById('alert-tendencia').value    = alerta.tendencia    || 'subiendo';
+    document.getElementById('alert-consecutivos').value = alerta.consecutivos || 3;
+  }
+
+  updatePriceHint();
 }
 
 function closeModal() {
+  editingAlertId = null;
   document.getElementById('modal-overlay').classList.add('hidden');
   document.getElementById('alert-form').reset();
+  // Resetear títulos para la próxima apertura
+  document.getElementById('modal-title').textContent      = 'Nueva alerta';
+  document.getElementById('modal-submit-btn').textContent = 'Crear alerta';
 }
 
 function switchAlertType(tipAlerta) {
@@ -424,6 +472,10 @@ function handleResetAlerta(id) {
   resetAlerta(id);
   renderAlertas();
   showToast('Alerta reactivada', 'info');
+}
+
+function handleEditAlerta(id) {
+  openModalEdit(id);
 }
 
 function handleAlertSubmit(e) {
@@ -460,10 +512,17 @@ function handleAlertSubmit(e) {
     params = { ...params, tendencia, consecutivos };
   }
 
-  createAlerta(params);
-  closeModal();
-  renderAlertas();
-  showToast('Alerta creada ✓', 'success');
+  if (editingAlertId) {
+    updateAlerta(editingAlertId, params);
+    closeModal();
+    renderAlertas();
+    showToast('Alerta actualizada ✓', 'success');
+  } else {
+    createAlerta(params);
+    closeModal();
+    renderAlertas();
+    showToast('Alerta creada ✓', 'success');
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════

@@ -87,6 +87,31 @@ function resetAlerta(id) {
   _saveAlertas(list);
 }
 
+function updateAlerta(id, params) {
+  const list = getAlertas();
+  const idx  = list.findIndex(a => a.id === id);
+  if (idx === -1) { console.warn('[alerts] updateAlerta: id no encontrado:', id); return null; }
+
+  // Merge: conservar id, userId, createdAt y triggered original
+  list[idx] = {
+    ...list[idx],
+    ...params,
+    id,
+    tipo:      migrarTipo(params.tipo || list[idx].tipo),
+    tipAlerta: params.tipAlerta || list[idx].tipAlerta || 'umbral',
+    // al editar, reactivar la alerta si estaba disparada
+    triggered:   false,
+    triggeredAt: undefined,
+    updatedAt: new Date().toISOString(),
+  };
+  delete list[idx].triggeredAt; // limpiar campo si existía
+
+  _saveAlertas(list);
+  console.log('[alerts] alerta actualizada:', id, list[idx]);
+  apiUpdateAlerta(id, list[idx]).catch(() => {});
+  return list[idx];
+}
+
 // ── Título de alerta para la UI ────────────────────────────────────
 
 function alertaTitle(a) {

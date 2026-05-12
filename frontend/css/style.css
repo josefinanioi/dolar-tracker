@@ -375,11 +375,10 @@ body {
   width: 100%; max-width: 440px;
   box-shadow: var(--shadow);
   animation: slideUp .2s ease;
-  /* Limitar altura y permitir scroll interno */
   display: flex;
   flex-direction: column;
-  max-height: 90vh;
-  overflow: hidden;
+  max-height: 90vh;   /* nunca más alto que la pantalla */
+  overflow: hidden;   /* el scroll lo maneja .modal-body */
 }
 @keyframes slideUp { from { opacity:0; transform:translateY(14px) } to { opacity:1; transform:none } }
 
@@ -387,30 +386,29 @@ body {
   display: flex; align-items: center; justify-content: space-between;
   padding: 1rem 1.25rem;
   border-bottom: 1px solid var(--border);
-  flex-shrink: 0; /* nunca se comprime */
+  flex-shrink: 0;
 }
 .modal-header h3 { font-size: 1rem; font-weight: 600; }
 
-/* El form ocupa el espacio restante y scrollea */
+/* El form ocupa todo el espacio disponible y scrollea internamente */
 .modal-body {
   padding: 1.25rem;
   display: flex; flex-direction: column; gap: .9rem;
   overflow-y: auto;
   flex: 1 1 auto;
   -webkit-overflow-scrolling: touch;
+  /* Scroll suave en iOS */
+  overscroll-behavior: contain;
 }
 
-/* Footer sticky: siempre visible al final del área scrolleable */
+/* Footer es flex-child directo del modal → siempre visible,
+   sin position:sticky ni negative margins */
 .modal-footer {
   display: flex; justify-content: flex-end; gap: .6rem;
-  position: sticky;
-  bottom: 0;
-  /* Compensar el padding del .modal-body para cubrir el ancho completo */
-  margin: 0 -1.25rem -1.25rem;
-  padding: .75rem 1.25rem;
+  padding: .875rem 1.25rem;
   background: var(--bg-card);
   border-top: 1px solid var(--border);
-  z-index: 1;
+  flex-shrink: 0;  /* nunca se comprime aunque el body scrollee */
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -506,7 +504,18 @@ body {
   .chart-controls  { flex-wrap: wrap; gap: .35rem; }
   .range-btns      { flex-wrap: wrap; }
 
-  /* Modal: columnas en una sola en mobile */
+  /* Modal: ocupa toda la pantalla de forma nativa en mobile */
+  .modal-overlay { padding: 0; align-items: flex-end; }
+  .modal {
+    max-width: 100%;
+    max-height: 92vh;
+    border-radius: var(--r) var(--r) 0 0; /* redondeado solo arriba */
+  }
+  .modal-header { padding: .875rem 1rem; }
+  .modal-body   { padding: .875rem 1rem; gap: .7rem; }
+  .modal-footer { padding: .75rem 1rem; }
+
+  /* Columna única en todos los form-row del modal */
   .form-row { grid-template-columns: 1fr; }
   .alert-type-tabs .tab-btn { font-size: .7rem; padding: .28rem .4rem; }
 }

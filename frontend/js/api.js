@@ -126,6 +126,19 @@ async function apiSubscribePush(subscription, userId) {
   } catch { return false; }
 }
 
+async function apiUpdateAlerta(id, alert) {
+  if (!CONFIG.BACKEND_URL) return null;
+  try {
+    const res = await fetch(`${CONFIG.BACKEND_URL}/api/alertas/${id}`, {
+      method:  'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(alert),
+    });
+    if (res.ok) return await res.json();
+  } catch { /* sin backend — localStorage es la fuente de verdad */ }
+  return null;
+}
+
 async function apiCreateAlerta(alert) {
   if (!CONFIG.BACKEND_URL) return null;
   try {
