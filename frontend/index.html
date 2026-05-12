@@ -6,7 +6,17 @@
   <meta name="theme-color" content="#3b82f6">
   <meta name="description" content="Seguimiento del dólar en Argentina con alertas personalizadas">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <!--
+    black-translucent → black:
+    Con "black-translucent" el status bar era transparente y el contenido web
+    se renderizaba DETRÁS de él. El sistema iOS puede interceptar taps en esa zona
+    para "tap-to-scroll-to-top" antes de que lleguen al DOM.
+    Con "black" el status bar tiene fondo negro opaco (íconos blancos). El contenido
+    web NO se renderiza detrás — comienza debajo. Elimina el problema de taps.
+    viewport-fit=cover sigue activo para evitar barras en la parte inferior (home indicator).
+    env(safe-area-inset-bottom) en toast y modal-footer sigue siendo necesario.
+  -->
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="Dólar AR">
   <title>Dólar AR</title>
   <link rel="manifest" href="/manifest.json">

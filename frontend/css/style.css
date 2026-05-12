@@ -39,7 +39,18 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0;
-  /* Todos los elementos participan del box model correcto */
+  /* Elimina el flash gris en tap de iOS */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/*
+ * touch-action: manipulation en todos los botones:
+ *   - Elimina el delay de 300ms en iOS antes de procesar taps.
+ *   - Impide que iOS trate el tap como el inicio de un gesto de scroll.
+ *   - NO afecta al canvas (que tiene su propio touch-action: pan-y).
+ */
+button, [role="button"] {
+  touch-action: manipulation;
 }
 
 html {
@@ -58,38 +69,81 @@ body {
   background: var(--bg);
   color: var(--text);
   width: 100%;
-  min-height: 100vh;
-  min-height: 100dvh;           /* dynamic viewport height */
+  min-height: 100dvh;           /* dvh = dynamic viewport height (no 100vh fallback) */
   line-height: 1.5;
   /*
-   * SIN overflow-x: hidden, SIN position: relative, SIN -webkit-overflow-scrolling.
-   * En iOS PWA, overflow: hidden en body hace que el body deje de ser el scroll root,
-   * transfiriendo el scroll al <html>. Esto rompe el momentum scroll y el touch recovery.
-   * overflow-x: clip en <html> es suficiente para contener el overflow horizontal.
+   * padding-top: env(safe-area-inset-top) — iOS PWA / notch fix (ENFOQUE CORRECTO).
+   *
+   * En lugar de meter el padding en el header (que hace que el elemento .header
+   * empiece en y=0, DETRÁS del notch), ponemos el padding en el BODY.
+   * Así NINGÚN contenido web se renderiza detrás del notch: el body completo
+   * empieza por debajo de él. El área y=0..notch está cubierta por body::before.
+   *
+   * En dispositivos sin notch env() devuelve 0 — sin efecto colateral.
    */
-  overscroll-behavior-y: contain; /* evita pull-to-refresh en Android */
+  padding-top: env(safe-area-inset-top);
+  /*
+   * SIN overflow-x: hidden, SIN position: relative, SIN -webkit-overflow-scrolling.
+   * SIN overscroll-behavior-y: iOS lo ignora en standalone mode y puede causar
+   * comportamientos inesperados con el bounce scroll nativo del WKWebView.
+   */
   transition: background var(--t), color var(--t);
+}
+
+/*
+ * body::before — filler del área del notch.
+ *
+ * El body tiene padding-top = notch_height, por lo que el área
+ * y=0..notch_height queda "vacía" (muestra el background del html).
+ * Este pseudo-elemento la cubre con el mismo color del header, creando
+ * la ilusión de que el header se extiende hasta el borde de la pantalla.
+ *
+ * Hereda las CSS vars del body → cambia correctamente con el tema claro/oscuro.
+ * pointer-events: none → no intercepta ningún toque.
+ * z-index: 99 → por debajo del header (z-index: 100) y del modal (z-index: 1000).
+ */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: env(safe-area-inset-top);
+  background: var(--bg-card);
+  z-index: 99;
+  pointer-events: none;
+  /* Fuerza capa de compositing para evitar lag en iOS */
+  -webkit-transform: translateZ(0);
+          transform: translateZ(0);
 }
 
 /* ══════════════════════════════════════════════════════════════════
    Layout
    ══════════════════════════════════════════════════════════════════ */
 .header {
-  position: sticky; top: 0; z-index: 100;
-  display: flex; align-items: center; justify-content: space-between;
   /*
-   * env(safe-area-inset-top) — iOS PWA / notch fix.
-   * Con viewport-fit=cover el contenido empieza en (0,0) absoluto, detrás del notch.
-   * Sumamos el inset de la safe area al padding superior para que el contenido
-   * del header quede siempre DEBAJO del notch / status bar.
-   * En dispositivos sin notch env() vale 0, por lo que no hay efecto negativo.
+   * top: env(safe-area-inset-top) — el header PEGA ("sticks") al BORDE INFERIOR
+   * del notch, no al borde superior de la pantalla (y=0, que está DETRÁS del notch).
+   *
+   * Combinado con body { padding-top: env(safe-area-inset-top) }:
+   *   - El elemento .header empieza en su posición normal y=notch_height.
+   *   - Al hacer scroll, el header se fija en top=notch_height (debajo del notch).
+   *   - El elemento .header NUNCA entra en la zona del notch → taps 100% accesibles.
+   *   - body::before cubre y=0..notch_height con el color del header.
+   *
+   * SIN backdrop-filter: bug conocido en iOS WKWebView — backdrop-filter en
+   * elementos sticky/fixed crea una capa de compositing separada. El hit-testing
+   * de touch events puede usar la posición de la capa visual (con blur) en lugar
+   * de la posición del layout, desalineando la zona de tap. Se elimina para
+   * garantizar que los botones del header reciban eventos táctiles correctamente.
    */
-  padding: calc(env(safe-area-inset-top) + .75rem) 1.25rem .75rem;
-  width: 100%;                /* no desborda cuando body tiene overflow-x:hidden */
+  position: sticky;
+  top: env(safe-area-inset-top);
+  z-index: 100;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .75rem 1.25rem;    /* padding normal — sin safe-area calc */
+  width: 100%;
   background: var(--bg-card);
   border-bottom: 1px solid var(--border);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px); /* Safari */
+  /* backdrop-filter eliminado — ver comentario arriba */
 }
 .header-left  { display: flex; align-items: center; gap: .5rem; }
 .header-right { display: flex; gap: .4rem; }
@@ -452,7 +506,7 @@ body {
   animation: slideUp .2s ease;
   display: flex;
   flex-direction: column;
-  max-height: 90vh;   /* nunca más alto que la pantalla */
+  max-height: 90dvh;  /* dvh = dynamic viewport — no tapa el home indicator */
   overflow: hidden;   /* el scroll lo maneja .modal-body */
 }
 @keyframes slideUp { from { opacity:0; transform:translateY(14px) } to { opacity:1; transform:none } }
@@ -599,7 +653,7 @@ body {
   .modal-overlay { padding: 0; align-items: flex-end; }
   .modal {
     max-width: 100%;
-    max-height: 92vh;
+    max-height: 92dvh;
     border-radius: var(--r) var(--r) 0 0; /* redondeado solo arriba */
   }
   .modal-header { padding: .875rem 1rem; }
