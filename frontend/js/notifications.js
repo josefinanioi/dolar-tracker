@@ -2,6 +2,25 @@
 
 let swReg = null;
 
+// ── Toggle interno de notificaciones ──────────────────────────────
+// Fuente de verdad única. Completamente separado del permiso del navegador.
+// El permiso del sistema (granted/denied) no se puede revocar desde JS;
+// este flag controla si el ENGINE de alertas evalúa y dispara.
+//
+// Default: false (desactivado) — el usuario activa explícitamente con la campanita.
+// Valor en localStorage: 'true' | 'false' | (ausente → false)
+
+const NOTIF_ENABLED_KEY = 'dolar-ar-notifications-enabled';
+
+function isNotifEnabled() {
+  return localStorage.getItem(NOTIF_ENABLED_KEY) === 'true';
+}
+
+function setNotifEnabled(enabled) {
+  localStorage.setItem(NOTIF_ENABLED_KEY, enabled ? 'true' : 'false');
+  console.log(`[alerts] ${enabled ? 'enabled' : 'disabled'}`);
+}
+
 async function initServiceWorker() {
   if (!('serviceWorker' in navigator)) return null;
   try {
@@ -63,9 +82,13 @@ async function subscribePushNotifications(userId) {
 }
 
 // Muestra una notificación local (sin servidor).
-// Requiere que el permiso ya esté granted.
+// Doble guard: permiso del sistema Y toggle interno.
 function showLocalNotification(title, body) {
   if (Notification.permission !== 'granted') return;
+  if (!isNotifEnabled()) {
+    console.log('[alerts] skipped — notifications disabled');
+    return;
+  }
   if (swReg) {
     swReg.showNotification(title, {
       body,

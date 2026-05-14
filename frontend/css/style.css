@@ -438,6 +438,7 @@ body {
 }
 .btn-icon:hover { background: var(--bg); color: var(--text); }
 .btn-icon.active { color: var(--primary); }
+.btn-icon.muted  { color: var(--muted); opacity: .4; }
 
 .btn-danger {
   background: transparent; border: none;

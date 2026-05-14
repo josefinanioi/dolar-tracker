@@ -1,71 +1,65 @@
-// ─── Gestión de alertas ───────────────────────────────────────────
+// ─── Sistema de Alertas — Dólar AR ────────────────────────────────
 //
-// STATE MACHINE por alerta:
+// Modelo único. Fuente de verdad: localStorage.
 //
-//   "armed"     → precio en zona segura, esperando cruce
-//   "triggered" → condición cumplida (alerta repetible), esperando que
-//                 el precio vuelva a zona segura para re-armarse
-//   "completed" → disparada y NO repetible → ignorada para siempre
+//   {
+//     id,                   // 'a-{timestamp}-{random}'
+//     tipo,                 // 'oficial' | 'blue' | 'mep' | 'ccl'
+//     campo,                // 'compra' | 'venta'
+//     condicion,            // 'baja' | 'sube'
+//     valor,                // number — precio objetivo
+//     repeating,            // boolean
+//     state,                // 'armed' | 'triggered'
+//     lastEvaluationPrice,  // number | null
+//     lastTriggeredAt,      // ISO string | null
+//     createdAt,            // ISO string
+//   }
 //
-// Transiciones para "baja de X":
+// ESTADOS: 'armed' | 'triggered'. Sin 'completed'. Sin boolean legacy.
 //
-//   armed     + precio < X   →  triggered (o completed si !repeating)   🔔 DISPARA
-//   triggered + precio ≥ X   →  armed                                    (auto-reset)
-//   triggered + precio < X   →  triggered                                (no repetir)
-//   completed + cualquier    →  completed                                (nunca más)
+// LÓGICA "baja de X":
+//   armed    + precio <  X  →  DISPARA → triggered
+//   armed    + precio >= X  →  sin cambio
+//   triggered + precio <  X  →  silencio (ya disparada, no repetir)
+//   triggered + precio >= X  →  repeating → armed | !repeating → triggered
 //
-// Transiciones para "sube de X": simétricas (> / ≤).
+// LÓGICA "sube de X" (simétrica):
+//   armed    + precio >  X  →  DISPARA → triggered
+//   armed    + precio <= X  →  sin cambio
+//   triggered + precio >  X  →  silencio
+//   triggered + precio <= X  →  repeating → armed | !repeating → triggered
 //
-// Regla central: el disparo ocurre SOLO en la transición armed → triggered/completed.
-// Mientras el precio permanece en zona de disparo sin cruce nuevo, no hay re-disparo.
+// REGLA ABSOLUTA: el disparo ocurre ÚNICAMENTE en la transición armed → triggered.
+// Nunca por refresh, focus, visibilitychange, ni por permanecer en zona de disparo.
 
 const ALERTS_KEY = 'dolar-ar-alerts';
 const USER_KEY   = 'dolar-ar-userid';
 
-// Migración de claves antiguas (tipo)
-const TIPO_MIGRATION = { bolsa: 'mep', contadoconliqui: 'ccl' };
-function migrarTipo(tipo) { return TIPO_MIGRATION[tipo] ?? tipo; }
-
 const TIPO_LABEL = { blue: 'Blue', oficial: 'Oficial', mep: 'MEP', ccl: 'CCL' };
 
-const PERIODO_MS = {
-  '1h':  1  * 60 * 60 * 1000,
-  '24h': 24 * 60 * 60 * 1000,
-  '7d':  7  * 24 * 60 * 60 * 1000,
-  '30d': 30 * 24 * 60 * 60 * 1000,
-};
-
-// ── Migración / normalización ─────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════
+// Guard de instancia única
+// ══════════════════════════════════════════════════════════════════
 //
-// Convierte alertas del formato viejo (boolean triggered) a state machine.
-// También normaliza campos numéricos que puedan haberse guardado como strings.
+// Llamar UNA vez desde init(). Si se llama más de una vez → hay double-init.
 
-function _migrarAlerta(a) {
-  // ── 1. Normalizar numéricos ─────────────────────────────────────
-  if (a.valor        != null) a.valor        = Number(a.valor);
-  if (a.porcentaje   != null) a.porcentaje   = Number(a.porcentaje);
-  if (a.consecutivos != null) a.consecutivos = Number(a.consecutivos);
-
-  // ── 2. Asegurar state machine ───────────────────────────────────
-  // NO hay return temprano — SIEMPRE llegamos al paso 3.
-  if (a.state !== 'armed' && a.state !== 'triggered' && a.state !== 'completed') {
-    // Migrar desde boolean legacy
-    a.state = (a.triggered === true)
-      ? (a.repeating ? 'triggered' : 'completed')
-      : 'armed';
+function startAlertsEngine() {
+  if (window.__alertsEngineStarted) {
+    console.warn('[alerts] ⚠️ engine already started — double init detected', {
+      runtime: window.__runtimeId,
+    });
+    return;
   }
-
-  // ── 3. Purgar campos legacy — sin excepciones ───────────────────
-  // Este era el bug: el `return a` temprano evitaba que esta limpieza
-  // corriera en alertas que ya tenían `state`, dejando `triggered` en el
-  // objeto y re-persistiéndolo en cada _saveAlertas().
-  delete a.triggered;    // boolean legacy — NUNCA más
-  delete a.triggeredAt;  // campo de fecha viejo (ahora es lastTriggeredAt)
-
-  return a;
+  window.__alertsEngineStarted = true;
+  console.log('[alerts] ✅ engine started', {
+    runtime:   window.__runtimeId,
+    timestamp: new Date().toISOString(),
+  });
 }
 
-// ── User ID ────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════
+// User ID
+// ══════════════════════════════════════════════════════════════════
 
 function getUserId() {
   let id = localStorage.getItem(USER_KEY);
@@ -76,204 +70,218 @@ function getUserId() {
   return id;
 }
 
-// ── CRUD ──────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════
+// Storage — sin caché en memoria
+// ══════════════════════════════════════════════════════════════════
 
-function getAlertas() {
+function _readAlerts() {
   try {
-    const list = JSON.parse(localStorage.getItem(ALERTS_KEY) || '[]');
-    return list.map(a => _migrarAlerta({ ...a, tipo: migrarTipo(a.tipo) }));
+    const raw = JSON.parse(localStorage.getItem(ALERTS_KEY) || '[]');
+    return Array.isArray(raw) ? raw : [];
   } catch {
+    console.error('[alerts] _readAlerts: localStorage corrupto — devolviendo []');
     return [];
   }
 }
 
-function _saveAlertas(list) {
-  // Sanitizar antes de escribir: eliminar campos legacy por si llegaron en memoria.
-  // Garantiza que el storage NUNCA contenga `triggered` ni `triggeredAt`.
-  const clean = list.map(({ triggered, triggeredAt, ...rest }) => rest);
-  localStorage.setItem(ALERTS_KEY, JSON.stringify(clean));
+function _writeAlerts(list) {
+  try {
+    localStorage.setItem(ALERTS_KEY, JSON.stringify(list));
+  } catch (err) {
+    console.error('[alerts] _writeAlerts: error al persistir:', err);
+  }
 }
 
-// cotizaciones: objeto { oficial, blue, mep, ccl } con precios actuales.
-// Se usa para calcular el estado inicial correcto y evitar disparos inmediatos
-// cuando el precio ya está en zona de disparo en el momento de crear la alerta.
-function createAlerta(params, cotizaciones = null) {
-  const initialState = _calcularEstadoInicial(params, cotizaciones);
-  console.log(`[alerts] createAlerta — estado inicial: ${initialState}`,
-    { tipo: params.tipo, campo: params.campo, condicion: params.condicion, valor: params.valor });
+// ══════════════════════════════════════════════════════════════════
+// CRUD
+// ══════════════════════════════════════════════════════════════════
 
-  const alert = _migrarAlerta({
-    id:        `a-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    ...params,
-    tipo:      migrarTipo(params.tipo),
-    tipAlerta: params.tipAlerta || 'umbral',
-    state:     initialState,
-    userId:    getUserId(),
-    createdAt: new Date().toISOString(),
-  });
-  const list = getAlertas();
+function getAlertas() {
+  return _readAlerts();
+}
+
+// cotizaciones: { oficial, blue, mep, ccl } — para calcular estado inicial.
+// Si el precio ya está en zona de disparo al crear → state=triggered
+// para evitar notificar inmediatamente.
+function createAlerta(params, cotizaciones = null) {
+  const { tipo, campo, condicion, repeating } = params;
+  const valor = Number(params.valor);
+
+  if (!tipo || !campo || !condicion || Number.isNaN(valor) || valor <= 0) {
+    console.error('[alerts] createAlerta: parámetros inválidos', params);
+    return null;
+  }
+
+  // Estado inicial y referencia de precio.
+  // lastEvaluationPrice = precio actual → el primer crossing check tendrá referencia real.
+  // Si el precio ya está en zona de disparo → triggered (el crossing ocurrió antes de crear).
+  // Si está del lado seguro → armed, esperando el cruce.
+  let state               = 'armed';
+  let lastEvaluationPrice = null;
+
+  if (cotizaciones) {
+    const precio = Number(cotizaciones[tipo]?.[campo]);
+    if (!Number.isNaN(precio)) {
+      lastEvaluationPrice = precio; // referencia para el primer crossing check
+      const yaEnZona =
+        (condicion === 'baja' && precio < valor) ||
+        (condicion === 'sube' && precio > valor);
+      if (yaEnZona) {
+        state = 'triggered';
+        console.log(`[alerts] createAlerta: precio ${precio} ya en zona → state=triggered (crossing previo)`);
+      } else {
+        console.log(`[alerts] createAlerta: precio ${precio} lado seguro → state=armed | lastEvaluationPrice=${precio}`);
+      }
+    }
+  }
+
+  const alert = {
+    id:                  `a-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    tipo,
+    campo,
+    condicion,
+    valor,
+    repeating:           !!repeating,
+    state,
+    lastEvaluationPrice,
+    lastTriggeredAt:     null,
+    createdAt:           new Date().toISOString(),
+  };
+
+  const list = _readAlerts();
   list.push(alert);
-  _saveAlertas(list);
+  _writeAlerts(list);
+
+  console.log('[alerts] createAlerta OK:', alert.id, { tipo, campo, condicion, valor, state });
   apiCreateAlerta(alert).catch(() => {});
   return alert;
 }
 
-// ── Estado inicial al crear ────────────────────────────────────────
-//
-// Si el precio actual ya está en zona de disparo cuando se crea la alerta,
-// la iniciamos como "triggered" para NO disparar inmediatamente.
-// Solo dispara cuando el precio cruza el umbral (zona segura → zona de disparo).
-//
-// Ejemplo:
-//   precio actual = 1410, umbral = 1415, condicion = "baja"
-//   1410 < 1415  →  ya en zona de disparo  →  initialState = "triggered"
-//   Cuando el precio suba a ≥ 1415 → auto-reset a "armed"
-//   Luego si vuelve a bajar a < 1415 → DISPARA
-
-function _calcularEstadoInicial(params, cotizaciones) {
-  // Solo aplica a alertas de umbral con cotizaciones disponibles
-  if (!cotizaciones || (params.tipAlerta || 'umbral') !== 'umbral') return 'armed';
-
-  const prices  = cotizaciones[migrarTipo(params.tipo)];
-  if (!prices) return 'armed';
-
-  const precio   = Number(prices[params.campo]);
-  const objetivo = Number(params.valor);
-  if (Number.isNaN(precio) || Number.isNaN(objetivo)) return 'armed';
-
-  // ¿El precio actual ya está en zona de disparo?
-  const yaEnZona =
-    (params.condicion === 'baja' && precio < objetivo) ||
-    (params.condicion === 'sube' && precio > objetivo);
-
-  if (yaEnZona) {
-    console.log(`[alerts] precio actual (${precio}) ya en zona de disparo (${params.condicion} ${objetivo}) → state=triggered`);
-    return 'triggered'; // esperamos que el precio salga de la zona antes de disparar
-  }
-
-  return 'armed';
-}
-
+// Eliminar por ID. Lee fresco, filtra, persiste inmediatamente.
 function deleteAlerta(id) {
-  const list  = getAlertas();
-  const antes = list.length;
+  const list  = _readAlerts();
   const nueva = list.filter(a => a.id !== id);
-
-  _saveAlertas(nueva);
-
-  // ── Verificación inmediata del storage ───────────────────────
-  // Lee de vuelta el localStorage para confirmar que el setItem persistió.
-  const persistido = JSON.parse(localStorage.getItem(ALERTS_KEY) || '[]');
-  console.log('[alerts] Storage después de delete:', persistido);
-  console.log(`[alerts] eliminada: ${id} | antes=${antes} filtrado=${nueva.length} storage=${persistido.length}`);
-
-  if (persistido.length !== nueva.length) {
-    console.error('[alerts] ❌ DISCREPANCIA: el storage no coincide con el array filtrado. Reintentando write...');
-    localStorage.setItem(ALERTS_KEY, JSON.stringify(nueva));
-    console.log('[alerts] segundo write:', JSON.parse(localStorage.getItem(ALERTS_KEY) || '[]').length, 'alertas');
-  }
-
-  console.log('[alerts] IDs restantes en storage:', persistido.map(a => a.id));
-
-  apiDeleteAlerta(id).then(ok => {
-    if (!ok) console.warn('[alerts] ⚠️ la alerta', id, 'puede seguir activa en el backend');
-  }).catch(() => {});
+  _writeAlerts(nueva);
+  console.log('[alerts] deleteAlerta:', id, `(${list.length} → ${nueva.length} alertas)`);
+  apiDeleteAlerta(id).catch(() => {});
 }
 
-// Reset manual (botón ↺ en UI) → vuelve a armed para poder re-dispararse
-function resetAlerta(id) {
-  const list = getAlertas();
-  const a    = list.find(x => x.id === id);
-  if (a) {
-    a.state = 'armed';
-    delete a.lastTriggeredAt;
-  }
-  _saveAlertas(list);
-}
-
+// Editar: reemplaza los campos, re-arma siempre.
 function updateAlerta(id, params) {
-  const list = getAlertas();
+  const { tipo, campo, condicion, repeating } = params;
+  const valor = Number(params.valor);
+
+  if (!tipo || !campo || !condicion || Number.isNaN(valor) || valor <= 0) {
+    console.error('[alerts] updateAlerta: parámetros inválidos', params);
+    return null;
+  }
+
+  const list = _readAlerts();
   const idx  = list.findIndex(a => a.id === id);
-  if (idx === -1) { console.warn('[alerts] updateAlerta: id no encontrado:', id); return null; }
+  if (idx === -1) {
+    console.warn('[alerts] updateAlerta: id no encontrado:', id);
+    return null;
+  }
 
-  list[idx] = _migrarAlerta({
-    ...list[idx],
-    ...params,
+  list[idx] = {
     id,
-    tipo:      migrarTipo(params.tipo || list[idx].tipo),
-    tipAlerta: params.tipAlerta || list[idx].tipAlerta || 'umbral',
-    state:     'armed',   // al editar, re-armar siempre
-    updatedAt: new Date().toISOString(),
-  });
-  delete list[idx].lastTriggeredAt;
+    tipo,
+    campo,
+    condicion,
+    valor,
+    repeating:           !!repeating,
+    state:               'armed',
+    lastEvaluationPrice: null,
+    lastTriggeredAt:     null,
+    createdAt:           list[idx].createdAt,
+    updatedAt:           new Date().toISOString(),
+  };
 
-  _saveAlertas(list);
-  console.log('[alerts] actualizada:', id, list[idx]);
+  _writeAlerts(list);
+  console.log('[alerts] updateAlerta OK:', id, list[idx]);
   apiUpdateAlerta(id, list[idx]).catch(() => {});
   return list[idx];
 }
 
-// ── Título para la UI ──────────────────────────────────────────────
+// Re-armar manualmente (botón ↺ en UI).
+function resetAlerta(id) {
+  const list = _readAlerts();
+  const a    = list.find(x => x.id === id);
+  if (!a) {
+    console.warn('[alerts] resetAlerta: id no encontrado:', id);
+    return;
+  }
+  a.state               = 'armed';
+  a.lastEvaluationPrice = null;
+  _writeAlerts(list);
+  console.log('[alerts] resetAlerta OK:', id, '→ armed');
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Título para la UI
+// ══════════════════════════════════════════════════════════════════
 
 function alertaTitle(a) {
   if (!a || typeof a !== 'object') return '(alerta inválida)';
   const tipoLbl  = TIPO_LABEL[a.tipo]  || a.tipo  || '?';
   const campoLbl = a.campo === 'compra' ? 'Compra' : 'Venta';
-  const tip      = a.tipAlerta || 'umbral';
-
-  if (tip === 'umbral') {
-    const condLbl = a.condicion === 'baja' ? '↓ baja de' : '↑ sube de';
-    return `${tipoLbl} ${campoLbl} ${condLbl} $${(a.valor || 0).toLocaleString('es-AR')}`;
-  }
-  if (tip === 'variacion') {
-    const dirLbl = a.condicion === 'sube' ? '↑ sube' : '↓ baja';
-    return `${tipoLbl} ${campoLbl} ${dirLbl} ${a.porcentaje}% en ${a.periodo}`;
-  }
-  if (tip === 'extremo') {
-    const extLbl = a.extremo === 'minimo' ? '↓ toca mínimo' : '↑ rompe máximo';
-    return `${tipoLbl} ${campoLbl} ${extLbl} de ${a.periodo}`;
-  }
-  if (tip === 'tendencia') {
-    const tLbl = a.tendencia === 'subiendo' ? '↑ tendencia alcista' : '↓ tendencia bajista';
-    return `${tipoLbl} ${campoLbl} ${tLbl} (${a.consecutivos || 3} consecutivos)`;
-  }
-  return `${tipoLbl} ${campoLbl}`;
+  const condLbl  = a.condicion === 'baja' ? '↓ baja de' : '↑ sube de';
+  const valorStr = typeof a.valor === 'number'
+    ? a.valor.toLocaleString('es-AR')
+    : String(a.valor ?? '?');
+  return `${tipoLbl} ${campoLbl} ${condLbl} $${valorStr}`;
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Evaluación — State Machine
+// Motor de evaluación
 // ══════════════════════════════════════════════════════════════════
 //
-// Algoritmo:
-//   1. Lee alertas desde localStorage (lectura fresca, siempre).
-//   2. Para cada alerta, calcula el nuevo estado con _computeState().
-//   3. Si el estado cambió, muta el objeto en la lista.
-//   4. Si la transición fue armed → triggered/completed: es un DISPARO.
-//   5. Al final: un solo _saveAlertas() si hubo algún cambio.
-//
-// Propiedad clave: el disparo ocurre EXACTAMENTE en la transición.
-// Un precio que permanece en zona de disparo no genera disparos repetidos.
+// Contrato:
+//   1. Lee localStorage fresco — nunca usa arrays cacheados en memoria
+//   2. Evalúa cada alerta con la state machine
+//   3. DISPARO ocurre SOLO en la transición armed → triggered
+//   4. Escribe localStorage UNA vez al final si hubo cambios
+//   5. Retorna [ { tipo, precio, mensaje } ] por cada disparo
 
-function evalAlertas(cotizaciones, history = []) {
+function evalAlertas(cotizaciones) {
   if (!cotizaciones || typeof cotizaciones !== 'object') return [];
 
-  console.count('[evalAlertas] ejecutado');
+  window.__evalCount = (window.__evalCount || 0) + 1;
+  console.log('[evalAlertas START]', {
+    runtime:   window.__runtimeId,
+    evalCount: window.__evalCount,
+    timestamp: new Date().toISOString(),
+  });
 
-  const list = getAlertas(); // lectura fresca + migración
+  // Lectura fresca — nunca referencia a array previo
+  const list = _readAlerts();
 
-  console.log('[evalAlertas] alertas activas:', list.map(a =>
-    `${a.id.slice(-6)}[${a.tipAlerta},${a.condicion||a.tendencia||a.extremo},val=${a.valor},state=${a.state},rep=${a.repeating}]`
-  ).join(' | ') || '(ninguna)');
+  if (!list.length) {
+    console.log('[evalAlertas] sin alertas');
+    return [];
+  }
 
-  let dirty   = false;
+  console.log('[evalAlertas] evaluando', list.length, 'alertas:', list.map(a =>
+    `${a.id.slice(-6)}[${a.condicion} ${a.valor} state=${a.state} rep=${a.repeating}]`
+  ).join(' | '));
+
+  let dirty  = false;
   const fired = [];
 
   for (const alert of list) {
     try {
-      const prevState = alert.state;
+      // ── Normalizar state si falta o es inválido (alertas legacy) ──
+      if (alert.state !== 'armed' && alert.state !== 'triggered') {
+        console.warn('[evalAlertas] state inválido en', alert.id, '→ normalizando a armed');
+        alert.state = 'armed';
+        dirty = true;
+      }
 
-      // completed: no-repetible ya disparada — nunca volver a evaluar
-      if (prevState === 'completed') continue;
+      // ── Validar campos mínimos ─────────────────────────────────
+      if (!alert.tipo || !alert.campo || !alert.condicion || typeof alert.valor !== 'number') {
+        console.warn('[evalAlertas] alerta malformada, saltando:', alert.id, alert);
+        continue;
+      }
 
       const prices = cotizaciones[alert.tipo];
       if (!prices) continue;
@@ -281,22 +289,106 @@ function evalAlertas(cotizaciones, history = []) {
       const precio = Number(prices[alert.campo]);
       if (Number.isNaN(precio)) continue;
 
-      const newState = _computeState(alert, precio, history);
+      const prevState = alert.state;
 
-      if (newState === prevState) continue; // sin transición — nada que hacer
+      // ── armed: detectar crossing ───────────────────────────────
+      //
+      // El disparo requiere cruce CONFIRMADO:
+      //   baja: el precio anterior estaba ≥ valor y ahora está < valor
+      //   sube: el precio anterior estaba ≤ valor y ahora está > valor
+      //
+      // Si lastEvaluationPrice es null (primera evaluación sin referencia),
+      // no se puede confirmar el cruce — se actualiza la referencia y se espera.
+      if (prevState === 'armed') {
+        const lastPrice = alert.lastEvaluationPrice; // leer ANTES de actualizar
 
-      // ── Transición de estado ──────────────────────────────────
-      alert.state = newState;
-      dirty = true;
+        // Actualizar referencia para el próximo tick
+        alert.lastEvaluationPrice = precio;
+        dirty = true;
 
-      console.log(`[evalAlertas] transición ${alert.id.slice(-6)}: ${prevState} → ${newState} (precio=${precio})`);
+        if (lastPrice === null) {
+          // Primera evaluación: sin referencia previa, no se puede detectar cruce.
+          console.log('[CROSSING CHECK]', {
+            alertId:      alert.id.slice(-6),
+            lastPrice:    null,
+            currentPrice: precio,
+            valor:        alert.valor,
+            condicion:    alert.condicion,
+            crossing:     false,
+            state:        prevState,
+            note:         'sin referencia previa — esperando próxima evaluación',
+          });
+        } else {
+          const crossing =
+            (alert.condicion === 'baja' && lastPrice >= alert.valor && precio < alert.valor) ||
+            (alert.condicion === 'sube' && lastPrice <= alert.valor && precio > alert.valor);
 
-      // DISPARO: solo en la transición armed → triggered/completed
-      if (prevState === 'armed' && (newState === 'triggered' || newState === 'completed')) {
-        alert.lastTriggeredAt = new Date().toISOString();
-        const mensaje = _buildMensaje(alert, precio, history);
-        console.log(`[evalAlertas] 🔔 DISPARO: ${mensaje}`);
-        fired.push({ alert, tipo: alert.tipo, precio, mensaje });
+          console.log('[CROSSING CHECK]', {
+            alertId:      alert.id.slice(-6),
+            lastPrice,
+            currentPrice: precio,
+            valor:        alert.valor,
+            condicion:    alert.condicion,
+            crossing,
+            state:        prevState,
+          });
+
+          if (crossing) {
+            // DISPARO: transición armed → triggered
+            alert.state           = 'triggered';
+            alert.lastTriggeredAt = new Date().toISOString();
+
+            const mensaje = `${TIPO_LABEL[alert.tipo] || alert.tipo} ${alert.campo} ` +
+              `${alert.condicion === 'baja' ? 'bajó de' : 'subió de'} ` +
+              `$${alert.valor.toLocaleString('es-AR')} ` +
+              `(ahora $${precio.toLocaleString('es-AR')})`;
+
+            console.log('[NOTIFICATION]', {
+              alertId:      alert.id,
+              transition:   'armed → triggered',
+              repeating:    alert.repeating,
+              lastPrice,
+              precioActual: precio,
+              valor:        alert.valor,
+              mensaje,
+            });
+
+            fired.push({ tipo: alert.tipo, precio, mensaje });
+          }
+        }
+
+      // ── triggered: silencio o auto-reset ──────────────────────
+      } else if (prevState === 'triggered') {
+        // Hysteresis: el re-arm usa boundary ESTRICTO opuesto al trigger.
+        // baja: dispara con precio < X  →  re-arma SOLO cuando precio > X  (no >=)
+        // sube: dispara con precio > X  →  re-arma SOLO cuando precio < X  (no <=)
+        // Mientras precio === X → permanece triggered. Elimina bounce en igualdad.
+        const fueraDeZona =
+          (alert.condicion === 'baja' && precio > alert.valor) ||
+          (alert.condicion === 'sube' && precio < alert.valor);
+
+        // Actualizar referencia (necesaria para el crossing check después del reset)
+        alert.lastEvaluationPrice = precio;
+        dirty = true;
+
+        console.log(
+          `[evalAlertas] ${alert.id.slice(-6)} triggered | ` +
+          `${alert.condicion} ${alert.valor} | precio=${precio} | fueraDeZona=${fueraDeZona}`
+        );
+
+        if (fueraDeZona && alert.repeating) {
+          // Auto-reset: precio volvió al lado seguro → re-armar
+          // lastEvaluationPrice ya fue actualizado a precio actual,
+          // que servirá de referencia para el próximo crossing check
+          alert.state = 'armed';
+          console.warn(
+            `[evalAlertas] RESET ${alert.id.slice(-6)}: triggered → armed ` +
+            `(precio=${precio} salió de zona ${alert.condicion} ${alert.valor})` +
+            ` | lastEvaluationPrice=${precio}`
+          );
+        }
+        // fueraDeZona + !repeating → triggered para siempre (reset manual con ↺)
+        // enZona      + triggered  → silencio absoluto
       }
 
     } catch (err) {
@@ -304,167 +396,43 @@ function evalAlertas(cotizaciones, history = []) {
     }
   }
 
-  if (dirty) _saveAlertas(list); // un solo write al final
+  if (dirty) {
+    _writeAlerts(list);
+  }
 
+  console.log(`[evalAlertas END] disparadas=${fired.length} / evaluadas=${list.length}`);
   return fired;
 }
 
-// ── _computeState ─────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════
+// Debug helpers (consola del navegador)
+// ══════════════════════════════════════════════════════════════════
 //
-// Función pura: dado el estado actual de la alerta y el precio actual,
-// retorna el nuevo estado. Sin side-effects.
-//
-// Transiciones posibles:
-//   armed     + condición cumplida  →  triggered (repeating) / completed (!repeating)
-//   triggered + condición NO cumple →  armed     (auto-reset)
-//   cualquiera + datos insuficientes →  sin cambio
-
-function _computeState(alert, precio, history) {
-  const current   = alert.state;
-  const tipAlerta = alert.tipAlerta || 'umbral';
-
-  // ── Umbral ────────────────────────────────────────────────────
-  if (tipAlerta === 'umbral') {
-    const objetivo = Number(alert.valor);
-    if (Number.isNaN(objetivo)) return current;
-
-    // ¿Precio en zona de disparo? (comparación ESTRICTA — nunca igualdad)
-    const enZona =
-      (alert.condicion === 'baja' && precio < objetivo) ||
-      (alert.condicion === 'sube' && precio > objetivo);
-
-    console.log(
-      `[_computeState] umbral ${alert.condicion} ${objetivo}: precio=${precio}` +
-      ` | ${alert.condicion === 'baja' ? `${precio} < ${objetivo}` : `${precio} > ${objetivo}`} = ${enZona}` +
-      ` | state: ${current}`
-    );
-
-    if (current === 'armed')     return enZona  ? (alert.repeating ? 'triggered' : 'completed') : 'armed';
-    if (current === 'triggered') return !enZona ? 'armed' : 'triggered';
-    return current;
-  }
-
-  // ── Variación % ───────────────────────────────────────────────
-  if (tipAlerta === 'variacion') {
-    if (history.length < 2) return current;
-    const porcentaje = Number(alert.porcentaje);
-    if (Number.isNaN(porcentaje)) return current;
-
-    const periodoMs = PERIODO_MS[alert.periodo] || PERIODO_MS['24h'];
-    const targetTs  = Date.now() - periodoMs;
-    const snaps     = history.filter(s => s[alert.tipo]?.[alert.campo] != null);
-    if (snaps.length < 2) return current;
-
-    const snapOld   = snaps.reduce((b, s) =>
-      Math.abs(s.ts - targetTs) < Math.abs(b.ts - targetTs) ? s : b, snaps[0]
-    );
-    const precioOld = Number(snapOld[alert.tipo][alert.campo]);
-    if (Number.isNaN(precioOld) || precioOld === 0) return current;
-
-    const pct    = ((precio - precioOld) / precioOld) * 100;
-    const enZona =
-      (alert.condicion === 'sube' && pct >=  porcentaje) ||
-      (alert.condicion === 'baja' && pct <= -porcentaje);
-
-    if (current === 'armed')     return enZona  ? (alert.repeating ? 'triggered' : 'completed') : 'armed';
-    if (current === 'triggered') return !enZona ? 'armed' : 'triggered';
-    return current;
-  }
-
-  // ── Extremo ───────────────────────────────────────────────────
-  if (tipAlerta === 'extremo') {
-    if (history.length < 10) return current;
-    const periodoMs = PERIODO_MS[alert.periodo] || PERIODO_MS['7d'];
-    const fromTs    = Date.now() - periodoMs;
-    const vals = history
-      .filter(s => s.ts >= fromTs && s[alert.tipo]?.[alert.campo] != null)
-      .map(s => Number(s[alert.tipo][alert.campo]))
-      .filter(v => !Number.isNaN(v));
-    if (vals.length < 5) return current;
-
-    const extremoVal = alert.extremo === 'minimo' ? Math.min(...vals) : Math.max(...vals);
-    const enZona     = Math.abs(precio - extremoVal) / extremoVal < 0.002;
-
-    if (current === 'armed')     return enZona  ? (alert.repeating ? 'triggered' : 'completed') : 'armed';
-    if (current === 'triggered') return !enZona ? 'armed' : 'triggered';
-    return current;
-  }
-
-  // ── Tendencia ─────────────────────────────────────────────────
-  if (tipAlerta === 'tendencia') {
-    if (history.length < 4) return current;
-    const n      = (Number(alert.consecutivos) || 3) + 1;
-    const recent = history
-      .filter(s => s[alert.tipo]?.[alert.campo] != null)
-      .slice(-n)
-      .map(s => Number(s[alert.tipo][alert.campo]))
-      .filter(v => !Number.isNaN(v));
-    if (recent.length < n) return current;
-
-    const esSubida = recent.every((v, i) => i === 0 || v > recent[i - 1]);
-    const esBajada = recent.every((v, i) => i === 0 || v < recent[i - 1]);
-    const enZona   =
-      (alert.tendencia === 'subiendo' && esSubida) ||
-      (alert.tendencia === 'bajando'  && esBajada);
-
-    if (current === 'armed')     return enZona  ? (alert.repeating ? 'triggered' : 'completed') : 'armed';
-    if (current === 'triggered') return !enZona ? 'armed' : 'triggered';
-    return current;
-  }
-
-  return current; // tipo no reconocido o datos insuficientes — sin cambio
-}
-
-// ── _buildMensaje ─────────────────────────────────────────────────
-
-function _buildMensaje(alert, precio, history) {
-  const tipoLbl   = TIPO_LABEL[alert.tipo] || alert.tipo;
-  const tipAlerta = alert.tipAlerta || 'umbral';
-  const p         = precio.toLocaleString('es-AR');
-
-  if (tipAlerta === 'umbral') {
-    const dir = alert.condicion === 'baja' ? 'bajó de' : 'subió de';
-    const obj = Number(alert.valor).toLocaleString('es-AR');
-    return `${tipoLbl} ${alert.campo} ${dir} $${obj} (ahora $${p})`;
-  }
-  if (tipAlerta === 'variacion') {
-    const dir = alert.condicion === 'sube' ? '↑ subió' : '↓ bajó';
-    return `${tipoLbl} ${alert.campo} ${dir} ${alert.porcentaje}% en ${alert.periodo}`;
-  }
-  if (tipAlerta === 'extremo') {
-    const lbl = alert.extremo === 'minimo' ? 'mínimo' : 'máximo';
-    return `${tipoLbl} tocó ${lbl} de ${alert.periodo}: $${p}`;
-  }
-  if (tipAlerta === 'tendencia') {
-    const lbl = alert.tendencia === 'subiendo' ? 'alcista' : 'bajista';
-    return `${tipoLbl} tendencia ${lbl}: $${p}`;
-  }
-  return `${tipoLbl} alerta: $${p}`;
-}
-
-// ── Debug helpers (consola del navegador) ─────────────────────────
-//
-//   _alertasDebug.estado()        → tabla completa de alertas
-//   _alertasDebug.limpiarTodo()   → borra todas las alertas de localStorage
+//   _alertasDebug.estado()      → tabla de todas las alertas
+//   _alertasDebug.raw()         → array crudo de localStorage
+//   _alertasDebug.limpiarTodo() → borra todo
 
 window._alertasDebug = {
   estado() {
-    console.table(getAlertas().map(a => ({
-      id:          a.id.slice(-8),
-      tipo:        a.tipo,
-      campo:       a.campo,
-      tipAlerta:   a.tipAlerta,
-      condicion:   a.condicion,
-      valor:       a.valor,
-      tipoValor:   typeof a.valor,
-      state:       a.state,
-      repeating:   a.repeating,
-      lastFired:   a.lastTriggeredAt,
+    const alerts = _readAlerts();
+    if (!alerts.length) { console.log('[debug] No hay alertas en localStorage'); return; }
+    console.table(alerts.map(a => ({
+      id:        a.id.slice(-8),
+      tipo:      a.tipo,
+      campo:     a.campo,
+      condicion: a.condicion,
+      valor:     a.valor,
+      repeating: a.repeating,
+      state:     a.state,
+      lastPrice: a.lastEvaluationPrice,
+      lastFired: a.lastTriggeredAt,
     })));
+  },
+  raw() {
+    return _readAlerts();
   },
   limpiarTodo() {
     localStorage.removeItem(ALERTS_KEY);
-    localStorage.removeItem('dolar-ar-last-prices'); // clave vieja
-    console.log('[debug] alertas y precios borrados de localStorage');
+    console.log('[debug] alertas borradas de localStorage');
   },
 };

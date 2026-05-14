@@ -1,5 +1,8 @@
 // ─── Dólar AR – Aplicación principal ─────────────────────────────
 
+window.__runtimeId = window.__runtimeId || Math.random().toString(36).slice(2);
+console.log('[RUNTIME]', window.__runtimeId);
+
 // ── Estado global ────────────────────────────────────────────────
 
 const state = {
@@ -100,13 +103,7 @@ function renderAlertas() {
   const list    = document.getElementById('alerts-list');
   const emptyEl = document.getElementById('alerts-empty');
 
-  let alerts = [];
-  try {
-    alerts = getAlertas();
-  } catch (err) {
-    console.error('[app] ❌ getAlertas:', err);
-    alerts = [];
-  }
+  const alerts = getAlertas();
 
   if (!alerts.length) {
     list.innerHTML = '';
@@ -115,44 +112,24 @@ function renderAlertas() {
   }
   emptyEl.classList.add('hidden');
 
-  const TIP_BADGE = { variacion: 'Var%', extremo: 'Ext', tendencia: 'Tend' };
-
   list.innerHTML = alerts.map(a => {
     try {
-      const tip      = a.tipAlerta || 'umbral';
-      const state    = a.state || 'armed'; // compatibilidad con alertas viejas sin migrar
-      const tipBadge = TIP_BADGE[tip] || '';
-
-      // Estado visual basado en state machine
-      const statusCls = state === 'armed' ? 'status-active' : 'status-triggered';
-      const statusLbl = state === 'armed'
-        ? '⏳ activa'
-        : state === 'completed'
-          ? '✓ completada'
-          : '✓ disparada';
+      const isTriggered = a.state === 'triggered';
+      const statusCls   = isTriggered ? 'status-triggered' : 'status-active';
+      const statusLbl   = isTriggered ? '✓ disparada' : '⏳ activa';
 
       let fecha = '—';
       try { fecha = new Date(a.createdAt).toLocaleDateString('es-AR'); } catch {}
 
-      let titulo = '—';
-      try { titulo = alertaTitle(a); } catch (terr) {
-        console.warn('[renderAlertas] alertaTitle error para alerta', a?.id, terr);
-      }
-
-      const isActive = state !== 'armed'; // triggered o completed → mostrar botón reset
-
       return `
-        <div class="alert-item${isActive ? ' triggered' : ''}">
+        <div class="alert-item${isTriggered ? ' triggered' : ''}">
           <div class="alert-info">
-            <span class="alert-title">
-              ${tipBadge ? `<span class="alert-type-badge">${tipBadge}</span>` : ''}
-              ${titulo}
-            </span>
+            <span class="alert-title">${alertaTitle(a)}</span>
             <span class="alert-meta">${a.repeating ? 'Repetitiva · ' : ''}Creada el ${fecha}</span>
           </div>
           <div class="alert-actions">
             <span class="alert-status ${statusCls}">${statusLbl}</span>
-            ${isActive
+            ${isTriggered
               ? `<button class="btn-icon btn-sm" title="Reactivar" onclick="handleResetAlerta('${a.id}')">↺</button>`
               : ''}
             <button class="btn-icon btn-sm" title="Editar" onclick="handleEditAlerta('${a.id}')">✎</button>
@@ -160,8 +137,8 @@ function renderAlertas() {
           </div>
         </div>`;
     } catch (err) {
-      console.error('[renderAlertas] error renderizando alerta', a?.id, err);
-      return ''; // omitir alerta malformada
+      console.error('[renderAlertas] error:', a?.id, err);
+      return '';
     }
   }).join('');
 }
@@ -310,15 +287,19 @@ async function updateCotizaciones() {
 
   // ── 5. Evaluar alertas — aislado, nunca rompe el render ──────
   try {
-    const disparadas = evalAlertas(cotizaciones, state.history);
-    for (const { tipo, mensaje } of disparadas) {
-      try {
-        showLocalNotification(`📊 Alerta Dólar ${TIPO_LABEL[tipo] || tipo}`, mensaje);
-        showToast(`Alerta: ${mensaje}`, 'success', 7000);
-      } catch { /* error de notificación — no crítico */ }
+    if (!isNotifEnabled()) {
+      console.log('[alerts] notifications disabled — skipping evaluation');
+    } else {
+      const disparadas = evalAlertas(cotizaciones);
+      for (const { tipo, mensaje } of disparadas) {
+        try {
+          showLocalNotification(`📊 Alerta Dólar ${TIPO_LABEL[tipo] || tipo}`, mensaje);
+          showToast(`Alerta: ${mensaje}`, 'success', 7000);
+        } catch { /* error de notificación — no crítico */ }
+      }
+      if (disparadas.length) renderAlertas();
+      console.log(`[app] ✅ alertas OK (${disparadas.length} disparadas)`);
     }
-    if (disparadas.length) renderAlertas();
-    console.log(`[app] ✅ alertas OK (${disparadas.length} disparadas)`);
   } catch (err) {
     console.error('[app] ❌ ERROR EN ALERTAS:', err);
   }
@@ -404,7 +385,6 @@ function openModal() {
   document.getElementById('modal-submit-btn').textContent = 'Crear alerta';
   document.getElementById('alert-form').reset();
   document.getElementById('modal-overlay').classList.remove('hidden');
-  switchAlertType('umbral');
   updatePriceHint();
 }
 
@@ -418,29 +398,11 @@ function openModalEdit(id) {
   document.getElementById('alert-form').reset();
   document.getElementById('modal-overlay').classList.remove('hidden');
 
-  // ── Pre-cargar campos comunes ─────────────────────────────────
-  document.getElementById('alert-tipo').value      = alerta.tipo  || 'oficial';
-  document.getElementById('alert-campo').value     = alerta.campo || 'venta';
-  document.getElementById('alert-repeating').checked = !!alerta.repeating;
-
-  // ── Pre-cargar tipo y campos específicos ──────────────────────
-  const tip = alerta.tipAlerta || 'umbral';
-  switchAlertType(tip);
-
-  if (tip === 'umbral') {
-    document.getElementById('alert-condicion').value = alerta.condicion || 'baja';
-    document.getElementById('alert-valor').value     = alerta.valor     || '';
-  } else if (tip === 'variacion') {
-    document.getElementById('alert-condicion-var').value = alerta.condicion  || 'sube';
-    document.getElementById('alert-porcentaje').value    = alerta.porcentaje || '';
-    document.getElementById('alert-periodo-var').value   = alerta.periodo    || '24h';
-  } else if (tip === 'extremo') {
-    document.getElementById('alert-extremo').value    = alerta.extremo || 'minimo';
-    document.getElementById('alert-periodo-ext').value = alerta.periodo || '7d';
-  } else if (tip === 'tendencia') {
-    document.getElementById('alert-tendencia').value    = alerta.tendencia    || 'subiendo';
-    document.getElementById('alert-consecutivos').value = alerta.consecutivos || 3;
-  }
+  document.getElementById('alert-tipo').value         = alerta.tipo      || 'oficial';
+  document.getElementById('alert-campo').value        = alerta.campo     || 'venta';
+  document.getElementById('alert-condicion').value    = alerta.condicion || 'baja';
+  document.getElementById('alert-valor').value        = alerta.valor     || '';
+  document.getElementById('alert-repeating').checked  = !!alerta.repeating;
 
   updatePriceHint();
 }
@@ -454,14 +416,6 @@ function closeModal() {
   document.getElementById('modal-submit-btn').textContent = 'Crear alerta';
 }
 
-function switchAlertType(tipAlerta) {
-  document.querySelectorAll('.tab-btn').forEach(b => {
-    b.classList.toggle('active', b.dataset.tipAlerta === tipAlerta);
-  });
-  document.querySelectorAll('.alert-fields').forEach(el => {
-    el.classList.toggle('hidden', el.dataset.tipAlerta !== tipAlerta);
-  });
-}
 
 function updatePriceHint() {
   const tipo  = document.getElementById('alert-tipo').value;
@@ -493,34 +447,16 @@ function handleAlertSubmit(e) {
 
   const tipo      = document.getElementById('alert-tipo').value;
   const campo     = document.getElementById('alert-campo').value;
+  const condicion = document.getElementById('alert-condicion').value;
+  const valor     = parseFloat(document.getElementById('alert-valor').value);
   const repeating = document.getElementById('alert-repeating').checked;
-  const tipAlerta = document.querySelector('.tab-btn.active')?.dataset.tipAlerta || 'umbral';
 
-  let params = { tipo, campo, tipAlerta, repeating };
+  if (!valor || valor <= 0) {
+    showToast('Ingresá un valor válido', 'error');
+    return;
+  }
 
-  if (tipAlerta === 'umbral') {
-    const condicion = document.getElementById('alert-condicion').value;
-    const valor     = parseFloat(document.getElementById('alert-valor').value);
-    if (!valor || valor <= 0) { showToast('Ingresá un valor válido', 'error'); return; }
-    params = { ...params, condicion, valor };
-  }
-  else if (tipAlerta === 'variacion') {
-    const condicion  = document.getElementById('alert-condicion-var').value;
-    const porcentaje = parseFloat(document.getElementById('alert-porcentaje').value);
-    const periodo    = document.getElementById('alert-periodo-var').value;
-    if (!porcentaje || porcentaje <= 0) { showToast('Ingresá un porcentaje válido', 'error'); return; }
-    params = { ...params, condicion, porcentaje, periodo };
-  }
-  else if (tipAlerta === 'extremo') {
-    const extremo = document.getElementById('alert-extremo').value;
-    const periodo = document.getElementById('alert-periodo-ext').value;
-    params = { ...params, extremo, periodo };
-  }
-  else if (tipAlerta === 'tendencia') {
-    const tendencia    = document.getElementById('alert-tendencia').value;
-    const consecutivos = parseInt(document.getElementById('alert-consecutivos').value) || 3;
-    params = { ...params, tendencia, consecutivos };
-  }
+  const params = { tipo, campo, condicion, valor, repeating };
 
   if (editingAlertId) {
     updateAlerta(editingAlertId, params);
@@ -528,9 +464,6 @@ function handleAlertSubmit(e) {
     renderAlertas();
     showToast('Alerta actualizada ✓', 'success');
   } else {
-    // Pasamos las cotizaciones actuales para calcular el estado inicial correcto.
-    // Si el precio ya está en zona de disparo, la alerta nace como "triggered"
-    // y espera a que el precio vuelva a zona segura antes de poder dispararse.
     createAlerta(params, state.cotizaciones);
     closeModal();
     renderAlertas();
@@ -542,24 +475,53 @@ function handleAlertSubmit(e) {
 // Notificaciones
 // ══════════════════════════════════════════════════════════════════
 
+// Sincroniza la campanita con el flag interno.
+// Solo refleja isNotifEnabled() — el permiso del navegador es independiente.
+//   active  → notificaciones ON  (azul)
+//   muted   → notificaciones OFF (gris tenue)
+function updateNotifBtn() {
+  const btn     = document.getElementById('notif-btn');
+  const enabled = isNotifEnabled();
+
+  btn.classList.toggle('active', enabled);
+  btn.classList.toggle('muted', !enabled);
+  btn.title = enabled ? 'Desactivar notificaciones' : 'Activar notificaciones';
+  btn.setAttribute('aria-label', btn.title);
+}
+
+// Toggle real: controla el engine de alertas completo.
+// Activar: pide permiso al sistema si hace falta, luego enciende el flag.
+// Desactivar: apaga el flag — evalAlertas no se ejecuta hasta reactivar.
 async function toggleNotifications() {
   const perm = getNotifPermission();
+
   if (perm === 'unsupported') {
-    showToast('Tu navegador no soporta notificaciones', 'error'); return;
+    showToast('Tu navegador no soporta notificaciones', 'error');
+    return;
   }
-  if (perm === 'denied') {
-    showToast('Notificaciones bloqueadas. Habilitarlas en configuración del navegador.', 'warning', 6000); return;
-  }
-  if (perm === 'granted') {
-    showToast('Notificaciones ya activadas ✓', 'info'); return;
-  }
-  const result = await requestNotifPermission();
-  if (result === 'granted') {
-    document.getElementById('notif-btn').classList.add('active');
+
+  if (!isNotifEnabled()) {
+    // ── Activar ───────────────────────────────────────────────
+    if (perm === 'denied') {
+      showToast('Permiso bloqueado en el navegador. Habilitalo en Configuración.', 'warning', 6000);
+      return;
+    }
+    if (perm !== 'granted') {
+      const result = await requestNotifPermission();
+      if (result !== 'granted') {
+        showToast('Permiso de notificaciones denegado', 'error');
+        return;
+      }
+      await subscribePushNotifications(getUserId());
+    }
+    setNotifEnabled(true);
+    updateNotifBtn();
     showToast('Notificaciones activadas ✓', 'success');
-    await subscribePushNotifications(getUserId());
   } else {
-    showToast('Permiso de notificaciones denegado', 'error');
+    // ── Desactivar ────────────────────────────────────────────
+    setNotifEnabled(false);
+    updateNotifBtn();
+    showToast('Notificaciones desactivadas', 'info');
   }
 }
 
@@ -601,10 +563,6 @@ function setupListeners() {
 
   document.getElementById('alert-tipo').addEventListener('change', updatePriceHint);
   document.getElementById('alert-campo').addEventListener('change', updatePriceHint);
-
-  document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => switchAlertType(btn.dataset.tipAlerta));
-  });
 
   document.getElementById('alert-form').addEventListener('submit', handleAlertSubmit);
 
@@ -664,13 +622,23 @@ function setupAutoRefresh() {
   _autoRefreshInitialized = true;
   console.log('[auto-refresh] iniciando — intervalo:', CONFIG.UPDATE_INTERVAL, 'ms');
 
-  setInterval(refreshAll, CONFIG.UPDATE_INTERVAL);
+  const intervalId = setInterval(refreshAll, CONFIG.UPDATE_INTERVAL);
+  console.log('[AUTOREFRESH CREATED]', {
+    intervalId,
+    runtime: window.__runtimeId,
+    timestamp: new Date().toISOString(),
+  });
 
   // visibilitychange cubre TODOS los casos: cambio de tab, PWA al frente,
   // Alt+Tab de regreso al browser, etc.
   // window.focus se ELIMINA — era redundante y causaba llamadas dobles/triples
   // (ambos eventos se disparan simultáneamente al volver a la tab).
-  document.addEventListener('visibilitychange', () => {
+  document.addEventListener('visibilitychange', (event) => {
+    console.log('[EVENT]', event.type, {
+      runtime: window.__runtimeId,
+      visibilityState: document.visibilityState,
+      timestamp: new Date().toISOString(),
+    });
     if (document.visibilityState !== 'visible') return;
     const elapsed = state.lastUpdate ? Date.now() - state.lastUpdate.getTime() : Infinity;
     if (elapsed > STALE_MS) {
@@ -688,31 +656,10 @@ async function init() {
   console.log('[app] 🚀 init start');
   console.count('[app] init llamado'); // detecta si init() corre más de una vez
 
-  // ── Migración de storage al arrancar ───────────────────────────
-  // getAlertas() lee, migra state machine Y purga campos legacy (triggered/triggeredAt).
-  // _saveAlertas() sanitiza antes de escribir (elimina triggered aunque esté en memoria).
-  // Este bloque persiste el resultado limpio para que el storage quede saneado
-  // desde la primera carga, sin depender de ciclos posteriores.
+  // ── Limpiar claves legacy de storage ──────────────────────────
   try {
-    const alertasMigradas = getAlertas(); // lee + normaliza + purga legacy
-    // _saveAlertas ya sanitiza, así que esto garantiza storage limpio
-    localStorage.setItem('dolar-ar-alerts', JSON.stringify(
-      alertasMigradas.map(({ triggered, triggeredAt, ...rest }) => rest) // doble seguro
-    ));
-    localStorage.removeItem('dolar-ar-last-prices'); // clave vieja — ya no se usa
-    console.log('[app] storage saneado:', alertasMigradas.length, 'alertas');
-    console.log('[app] estados:', alertasMigradas.map(a => `${a.id.slice(-6)}→${a.state}`).join(', '));
-    // Verificar que no queden campos legacy
-    const raw = JSON.parse(localStorage.getItem('dolar-ar-alerts') || '[]');
-    const conLegacy = raw.filter(a => 'triggered' in a || 'triggeredAt' in a);
-    if (conLegacy.length) {
-      console.error('[app] ❌ aún hay campos legacy en storage:', conLegacy);
-    } else {
-      console.log('[app] ✅ storage sin campos legacy (triggered eliminado)');
-    }
-  } catch (err) {
-    console.error('[app] ❌ error en migración de storage:', err);
-  }
+    localStorage.removeItem('dolar-ar-last-prices');
+  } catch { /* no crítico */ }
 
   loadTheme();
 
@@ -723,8 +670,8 @@ async function init() {
   catch (err) { console.warn('[app] ⚠️ initServiceWorker:', err.message); }
 
   try {
+    updateNotifBtn();
     if (getNotifPermission() === 'granted') {
-      document.getElementById('notif-btn').classList.add('active');
       subscribePushNotifications(getUserId());
     }
   } catch (err) { console.warn('[app] ⚠️ notif init:', err.message); }
@@ -754,6 +701,7 @@ async function init() {
     console.log('[app] ✅ renderAlertas inicial OK');
   } catch (err) { console.error('[app] ❌ renderAlertas en init:', err); }
 
+  startAlertsEngine();
   setupAutoRefresh();
   console.log('[app] ✅ init complete');
 }

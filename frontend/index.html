@@ -21,7 +21,7 @@
   <title>Dólar AR</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
-  <link rel="stylesheet" href="/css/style.css?v=13">
+  <link rel="stylesheet" href="/css/style.css?v=14">
   <style>
     /* ── iOS PWA notch / Dynamic Island fix — INLINE para evitar cache de archivos ──
        .header tiene position:sticky; top:0 y NECESITA padding-top ≥ safe-area.
@@ -193,104 +193,21 @@
           </div>
         </div>
 
-        <!-- Tabs de tipo -->
+        <!-- Condición y valor -->
         <div class="form-group">
-          <label>Tipo de alerta</label>
-          <div class="alert-type-tabs" role="tablist">
-            <button type="button" class="tab-btn active" data-tip-alerta="umbral" role="tab" aria-selected="true">Umbral</button>
-            <button type="button" class="tab-btn" data-tip-alerta="variacion" role="tab" aria-selected="false">Variación %</button>
-            <button type="button" class="tab-btn" data-tip-alerta="extremo" role="tab" aria-selected="false">Mín/Máx</button>
-            <button type="button" class="tab-btn" data-tip-alerta="tendencia" role="tab" aria-selected="false">Tendencia</button>
-          </div>
+          <label for="alert-condicion">Condición</label>
+          <select id="alert-condicion" class="form-control" required>
+            <option value="baja">Alertar si baja de…</option>
+            <option value="sube">Alertar si sube de…</option>
+          </select>
         </div>
-
-        <!-- Umbral -->
-        <div class="alert-fields" data-tip-alerta="umbral">
-          <div class="form-group">
-            <label for="alert-condicion">Condición</label>
-            <select id="alert-condicion" class="form-control" required>
-              <option value="baja">Alertar si baja de…</option>
-              <option value="sube">Alertar si sube de…</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label for="alert-valor">Valor objetivo ($)</label>
-            <div class="input-with-hint">
-              <input id="alert-valor" type="number" class="form-control"
-                     placeholder="Ej: 1050" min="1" step="0.01"
-                     aria-describedby="current-price-hint">
-              <span id="current-price-hint" class="input-hint"></span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Variación % -->
-        <div class="alert-fields hidden" data-tip-alerta="variacion">
-          <p class="fields-desc">Avisá cuando el precio cambie más de X% en el período.</p>
-          <div class="form-row">
-            <div class="form-group">
-              <label for="alert-condicion-var">Dirección</label>
-              <select id="alert-condicion-var" class="form-control">
-                <option value="sube">↑ Sube más de…</option>
-                <option value="baja">↓ Baja más de…</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label for="alert-porcentaje">Porcentaje (%)</label>
-              <input id="alert-porcentaje" type="number" class="form-control"
-                     placeholder="Ej: 2" min="0.1" max="50" step="0.1">
-            </div>
-          </div>
-          <div class="form-group">
-            <label for="alert-periodo-var">Período</label>
-            <select id="alert-periodo-var" class="form-control">
-              <option value="1h">1 hora</option>
-              <option value="24h" selected>24 horas</option>
-              <option value="7d">7 días</option>
-            </select>
-          </div>
-        </div>
-
-        <!-- Extremo -->
-        <div class="alert-fields hidden" data-tip-alerta="extremo">
-          <p class="fields-desc">Avisá cuando el precio toque el mínimo o máximo histórico.</p>
-          <div class="form-row">
-            <div class="form-group">
-              <label for="alert-extremo">Nivel</label>
-              <select id="alert-extremo" class="form-control">
-                <option value="minimo">↓ Mínimo</option>
-                <option value="maximo">↑ Máximo</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label for="alert-periodo-ext">Período de referencia</label>
-              <select id="alert-periodo-ext" class="form-control">
-                <option value="7d" selected>Últimos 7 días</option>
-                <option value="30d">Últimos 30 días</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        <!-- Tendencia -->
-        <div class="alert-fields hidden" data-tip-alerta="tendencia">
-          <p class="fields-desc">Avisá cuando el precio suba o baje N veces consecutivas.</p>
-          <div class="form-row">
-            <div class="form-group">
-              <label for="alert-tendencia">Dirección</label>
-              <select id="alert-tendencia" class="form-control">
-                <option value="subiendo">↑ Alcista</option>
-                <option value="bajando">↓ Bajista</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label for="alert-consecutivos">Mediciones consecutivas</label>
-              <select id="alert-consecutivos" class="form-control">
-                <option value="3" selected>3 (≈ 15 min)</option>
-                <option value="6">6 (≈ 30 min)</option>
-                <option value="12">12 (≈ 1 hora)</option>
-              </select>
-            </div>
+        <div class="form-group">
+          <label for="alert-valor">Valor objetivo ($)</label>
+          <div class="input-with-hint">
+            <input id="alert-valor" type="number" class="form-control"
+                   placeholder="Ej: 1050" min="1" step="0.01"
+                   aria-describedby="current-price-hint">
+            <span id="current-price-hint" class="input-hint"></span>
           </div>
         </div>
 
